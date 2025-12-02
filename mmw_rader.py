@@ -126,6 +126,13 @@ class MMWRaderThread(threading.Thread):
     def _handle_bin_id(self, byte_data: int) -> None:
         """处理bin序号"""
         self._temp_bin_id = byte_data
+        
+        # 验证 bin_id 是否在有效范围内
+        if self._temp_bin_id >= self._bin_num:
+            # bin_id 无效，回到初始状态
+            self.decode_status = self.STATE_WAITING_DLC_LOW
+            return
+        
         if self._temp_bin_id == 0:
             # bin_id = 0，需要读取 offset
             self.decode_status = self.STATE_WAITING_OFFSET
