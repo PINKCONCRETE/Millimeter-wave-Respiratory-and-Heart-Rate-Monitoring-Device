@@ -31,7 +31,7 @@ Pr---->Disp[Display]
 |-|-|
 |4Bytes|40Bytes|
 
-**SOF**: 数据长度2Bytes，bin序号2Bytes
+**SOF**: 数据长度2Bytes，bin序号1Bytes；当bin序号为0时第四字节为offset，否则为0
 **Data**: 实数2Bytes, 虚数2Bytes, 共10个复数
 
 #### 解码状态机
@@ -43,8 +43,8 @@ stateDiagram-v2
     state SOF {
         S0 : WAITING_DLC_LOW_BYTE
         S1 : WAITING_DLC_HIGH_BYTE
-        S2 : WAITING_BIN_ID_LOW_BYTE
-        S3 : WAITING_BIN_ID_HIGH_BYTE
+        S2 : WAITING_BIN_ID
+        S3 : WAITING_OFFSET
 
         S0 --> S1 : dlc_low_byte
         S0 --> S0 : else
@@ -52,10 +52,13 @@ stateDiagram-v2
         S1 --> S2 : dlc_high_byte
         S1 --> S0 : else
 
-        S2 --> S3 : bin_id_low_byte
-        S2 --> S0 : else
+        S2 --> S3 : bin_id == 0
+        S2 --> S4 : else
 
-        S3 --> D0 : bin_id_high_byte / i = 0
+        S4 --> D0 : 0 / i = 0
+        S4 --> S0 : else
+
+        S3 --> D0 : offset / i = 0
         S3 --> S0 : else
     }
 
