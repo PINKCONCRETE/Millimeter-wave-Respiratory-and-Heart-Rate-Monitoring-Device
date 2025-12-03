@@ -1,0 +1,23 @@
+# 毫米波呼吸心率监测设备 - Python依赖包
+
+## 核心依赖
+pyserial>=3.5
+numpy>=1.24.0
+matplotlib>=3.7.0
+
+## 开发依赖（可选）
+ruff>=0.1.0
+pylint>=3.0.0
+mypy>=1.7.0
+black>=23.0.0
+
+## 安装命令
+# 基础环境
+# conda create -n breath python=3.10
+# conda activate breath
+
+# 核心依赖
+# pip install pyserial numpy matplotlib
+
+# 开发工具（可选）
+# pip install ruff pylint mypy black
