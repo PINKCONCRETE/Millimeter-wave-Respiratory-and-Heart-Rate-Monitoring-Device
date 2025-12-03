@@ -5,8 +5,6 @@ __pycache__/
 test*.py
 *.txt
 
-mmw_processor.py
-
 # C extensions
 *.so
 
