@@ -1,6 +1,5 @@
 """
 毫米波雷达数据处理模块
-实现生产者-消费者模型的实时SCG波形生成
 """
 import threading
 from queue import Queue, Empty
