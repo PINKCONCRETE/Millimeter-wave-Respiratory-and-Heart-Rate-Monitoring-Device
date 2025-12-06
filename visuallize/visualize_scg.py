@@ -2,16 +2,21 @@
 
 使用matplotlib实时显示SCG波形，支持滑动窗口显示（默认1000个数据点）。
 """
+import sys
 import time
 from collections import deque
+from pathlib import Path
 from queue import Queue
 
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.animation import FuncAnimation
 
-from src.mmw_processor import MMWProcessorThread
-from src.mmw_rader import MMWRaderThread
+# 添加父目录到sys.path以支持导入src模块
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from src.mmw_processor import MMWProcessorThread  # noqa: E402
+from src.mmw_rader import MMWRaderThread  # noqa: E402
 
 
 class SCGVisualizer:

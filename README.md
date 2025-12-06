@@ -2,6 +2,25 @@
 
 一个基于毫米波雷达的心率、呼吸等生理指标的监测算法
 
+## 项目结构
+
+```text
+├── src/                      # 核心模块
+│   ├── mmw_rader.py         # 雷达数据采集
+│   ├── mmw_processor.py     # SCG波形处理
+│   └── mmw_breath.py        # 呼吸信号处理
+├── visuallize/              # 可视化脚本
+│   ├── visualize_scg.py     # SCG波形可视化
+│   └── visualize_breath.py  # 呼吸信号可视化
+├── test/                    # 测试脚本
+│   ├── test_decode_rate.py
+│   ├── test_processor_throughput.py
+│   ├── test_breath_throughput.py
+│   └── test_serial_rate.py
+└── source/                  # 原始算法代码
+    └── breath_old.py
+```
+
 ## Pipeline结构
 
 ```mermaid
@@ -148,6 +167,60 @@ radar.start()
 processor.start()
 ```
 
+### mmw_breath.py
+
+毫米波呼吸信号处理模块，从雷达线程获取FFT数据并生成呼吸波形和呼吸周期信息。
+基于 `breath_old.py` 改编，集成到流水线架构中。
+
+**核心算法：**
+
+1. **能量最大bin选择**：在通道0中选择能量最强的频率bin
+2. **相位提取与展开**：使用`np.unwrap`消除2π周期性跳变
+3. **基线漂移去除**：5秒窗口移动平均
+4. **信号平滑**：1.7秒滑动窗口平滑
+5. **峰谷检测**：识别呼吸周期的起止点
+6. **周期提取**：计算位移（displacement）和流速（flow rate）
+
+**输出数据：**
+
+```python
+breath_dict = {
+    'rr_wave': phase_info,        # 呼吸波形（1000点）
+    'displacement': displacement,  # 位移（归一化）
+    'flow_rate': flow_rate,        # 流速（归一化梯度）
+    'target_bin': bin_index,       # 选中的频率bin
+    'frame_idx': frame_number      # 帧编号
+}
+```
+
+**使用示例：**
+
+```python
+from queue import Queue
+from mmw_rader import MMWRaderThread
+from mmw_breath import MMWBreathThread
+
+# 创建数据队列
+data_queue = Queue()
+
+# 启动雷达线程
+radar = MMWRaderThread(
+    output_queue=data_queue,
+    serial_port="COM7",
+    serial_baudrate=921600
+)
+
+# 启动呼吸处理线程
+breath = MMWBreathThread(
+    input_queue=data_queue,
+    buffer_size=1000,  # 5秒数据缓冲
+    callback=lambda breath_dict: print(f"呼吸周期点数: {len(breath_dict['displacement'])}")
+)
+
+radar.start()
+breath.start()
+```
+
 ### visualize_scg.py
 
 实时可视化SCG波形，支持滑动窗口显示（默认1000个数据点）。
@@ -156,7 +229,36 @@ processor.start()
 
 ```bash
 conda activate breath
-python visualize_scg.py
+python visuallize/visualize_scg.py
+```
+
+### visualize_breath.py
+
+实时可视化呼吸波形和呼吸周期图（位移-流速循环），支持双图显示。
+
+**运行方式：**
+
+```bash
+conda activate breath
+python visuallize/visualize_breath.py
+```
+
+## 测试脚本
+
+所有测试脚本位于 `test/` 目录下：
+
+```bash
+# 测试雷达解码速率
+python test/test_decode_rate.py
+
+# 测试SCG处理器吞吐量
+python test/test_processor_throughput.py
+
+# 测试呼吸处理器吞吐量
+python test/test_breath_throughput.py
+
+# 测试串口数据接收速率
+python test/test_serial_rate.py
 ```
 
 ## 环境配置
@@ -166,12 +268,21 @@ python visualize_scg.py
 **依赖包：**
 
 ```bash
-pip install pyserial numpy matplotlib
+pip install pyserial numpy matplotlib scipy
 ```
 
 ## 数据流
 
+### SCG处理流水线
+
 ```text
 雷达硬件 → 串口 → MMWRaderThread → Queue → MMWProcessorThread → SCG波形 → 可视化
           (解码)                    (FFT)      (相位二阶导数)
+```
+
+### 呼吸处理流水线
+
+```text
+雷达硬件 → 串口 → MMWRaderThread → Queue → MMWBreathThread → 呼吸波形/周期 → 可视化
+          (解码)                    (FFT)   (相位处理+峰谷检测)
 ```
