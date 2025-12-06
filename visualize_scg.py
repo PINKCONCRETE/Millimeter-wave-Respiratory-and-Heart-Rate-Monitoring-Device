@@ -161,8 +161,8 @@ def main() -> None:
     # 配置参数
     serial_port = "COM7"
     baudrate = 921600
-    bin_num = 8
-    dlc = 10
+    channel_num = 8
+    bins_per_channel = 10
     buffer_size = 1000  # 处理缓冲区大小（必须为1000）
     window_size = 1000  # 可视化窗口大小
 
@@ -206,8 +206,8 @@ def main() -> None:
         output_queue=data_queue,
         serial_port=serial_port,
         serial_baudrate=baudrate,
-        bin_num=bin_num,
-        dlc=dlc,
+        channel_num=channel_num,
+        bins_per_channel=bins_per_channel,
     )
 
     # 创建处理线程
@@ -215,8 +215,8 @@ def main() -> None:
     processor_thread = MMWProcessorThread(
         input_queue=data_queue,
         output_queue=output_queue,
-        bin_num=bin_num,
-        dlc=dlc,
+        channel_num=channel_num,
+        bins_per_channel=bins_per_channel,
         buffer_size=buffer_size,
     )
 

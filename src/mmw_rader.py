@@ -15,11 +15,11 @@ class MMWRaderThread(threading.Thread):
     """毫米波雷达数据采集线程（生产者）.
 
     通过串口连接毫米波雷达，接收并解码原始数据帧。
-    实现基于状态机的帧解码，支持8个bin × 10个复数的数据采集。
+    实现基于状态机的帧解码，支持8个通道 × 每通道10个频率bin的数据采集。
 
     Attributes:
-        bin_num: bin数量（默认8）
-        dlc: 每帧的复数数量（默认10）
+        channel_num: 通道数量（默认8）
+        bins_per_channel: 每个通道的频率bin数量（默认10）
         decode_status: 当前解码状态机状态
 
     """
@@ -40,8 +40,8 @@ class MMWRaderThread(threading.Thread):
         output_queue: Queue | None = None,
         serial_port: str = "COM7",
         serial_baudrate: int = 921600,
-        bin_num: int = 8,
-        dlc: int = 10,
+        channel_num: int = 8,
+        bins_per_channel: int = 10,
     ) -> None:
         """
         初始化毫米波雷达线程
@@ -50,23 +50,23 @@ class MMWRaderThread(threading.Thread):
             output_queue: 输出队列，用于存放解码后的数据
             serial_port: 串口号
             serial_baudrate: 波特率
-            bin_num: bin的数量
-            dlc: 每帧的复数数量
+            channel_num: 通道数量
+            bins_per_channel: 每个通道的频率bin数量
         """
         super().__init__()
 
-        self._serial = self._init_serial(serial_port, serial_baudrate)
-        self._bin_num = bin_num
-        self._dlc = dlc
+        self._serial = MMWRaderThread._init_serial(serial_port, serial_baudrate)
+        self._channel_num = channel_num
+        self._bins_per_channel = bins_per_channel
         self._output_queue = output_queue or Queue()
-        self._data: list[list[complex]] = [[] for _ in range(bin_num)]
+        self._data: list[list[complex]] = [[] for _ in range(channel_num)]
 
         # 状态机状态
         self.decode_status = self.STATE_WAITING_DLC_LOW
 
         # 临时缓存变量
-        self._temp_dlc = 0
-        self._temp_bin_id = 0
+        self._temp_bins_count = 0
+        self._temp_channel_id = 0
         self._temp_offset = 0
         self._temp_real = 0
         self._temp_imag = 0
@@ -74,8 +74,8 @@ class MMWRaderThread(threading.Thread):
         self._temp_complexes: list[complex] = []
 
         # 统计信息
-        self._received_frames = 0  # 接收的完整帧数（bin 0-7全部接收）
-        self._received_bins = 0  # 接收的bin包数
+        self._received_frames = 0  # 接收的完整帧数（通道 0-7全部接收）
+        self._received_channels = 0  # 接收的通道包数
         self._received_bytes = 0  # 接收的字节数
         self._start_time = None
 
@@ -119,36 +119,36 @@ class MMWRaderThread(threading.Thread):
 
     def _handle_dlc_low(self, byte_data: int) -> None:
         """处理数据长度低字节"""
-        self._temp_dlc = byte_data
+        self._temp_bins_count = byte_data
         self.decode_status = self.STATE_WAITING_DLC_HIGH
 
     def _handle_dlc_high(self, byte_data: int) -> None:
         """处理数据长度高字节并验证"""
-        self._temp_dlc |= (byte_data << 8)
-        if self._temp_dlc == self._dlc:
+        self._temp_bins_count |= (byte_data << 8)
+        if self._temp_bins_count == self._bins_per_channel:
             self.decode_status = self.STATE_WAITING_BIN_ID
         else:
             self.decode_status = self.STATE_WAITING_DLC_LOW
 
     def _handle_bin_id(self, byte_data: int) -> None:
-        """处理bin序号"""
-        self._temp_bin_id = byte_data
+        """处理通道序号"""
+        self._temp_channel_id = byte_data
 
-        # 验证 bin_id 是否在有效范围内
-        if self._temp_bin_id >= self._bin_num:
-            # bin_id 无效，回到初始状态
+        # 验证 channel_id 是否在有效范围内
+        if self._temp_channel_id >= self._channel_num:
+            # channel_id 无效，回到初始状态
             self.decode_status = self.STATE_WAITING_DLC_LOW
             return
 
-        if self._temp_bin_id == 0:
-            # bin_id = 0，需要读取 offset
+        if self._temp_channel_id == 0:
+            # channel_id = 0，需要读取 offset
             self.decode_status = self.STATE_WAITING_OFFSET
         else:
-            # bin_id != 0，跳转到 check_offset 状态
+            # channel_id != 0，跳转到 check_offset 状态
             self.decode_status = self.STATE_CHECK_OFFSET
 
     def _handle_offset(self, byte_data: int) -> None:
-        """处理 offset 字节（仅当 bin_id=0 时）"""
+        """处理 offset 字节（仅当 channel_id=0 时）"""
         self._temp_offset = byte_data
         # 初始化 DATA 阶段，i = 0
         self._complex_count = 0
@@ -156,7 +156,7 @@ class MMWRaderThread(threading.Thread):
         self.decode_status = self.STATE_GET_REAL_LOW
 
     def _handle_check_offset(self, byte_data: int) -> None:
-        """检查 offset 是否为 0（当 bin_id != 0 时）"""
+        """检查 offset 是否为 0（当 channel_id != 0 时）"""
         if byte_data == 0:
             # offset = 0，初始化 DATA 阶段，i = 0
             self._complex_count = 0
@@ -193,7 +193,7 @@ class MMWRaderThread(threading.Thread):
         self._complex_count += 1
 
         # 判断是否接收完所有复数
-        if self._complex_count < self._temp_dlc:
+        if self._complex_count < self._temp_bins_count:
             self.decode_status = self.STATE_GET_REAL_LOW
         else:
             self._finish_frame()
@@ -208,27 +208,27 @@ class MMWRaderThread(threading.Thread):
         if self._start_time is None:
             self._start_time = time.time()
 
-        self._data[self._temp_bin_id] = self._temp_complexes.copy()
+        self._data[self._temp_channel_id] = self._temp_complexes.copy()
         self._output_queue.put({
-            "bin_id": self._temp_bin_id,
-            "dlc": self._temp_dlc,
+            "channel_id": self._temp_channel_id,
+            "bins_count": self._temp_bins_count,
             "data": self._temp_complexes.copy()
         })
-        self._received_bins += 1
+        self._received_channels += 1
 
-        # 当bin_id为7时，表示一个完整帧接收完毕
-        if self._temp_bin_id == self._bin_num - 1:
+        # 当channel_id为7时，表示一个完整帧接收完毕
+        if self._temp_channel_id == self._channel_num - 1:
             self._received_frames += 1
 
             # 每100帧打印一次统计
             if self._received_frames % 100 == 0:
                 elapsed = time.time() - self._start_time
                 frame_rate = self._received_frames / elapsed if elapsed > 0 else 0
-                bin_rate = self._received_bins / elapsed if elapsed > 0 else 0
+                channel_rate = self._received_channels / elapsed if elapsed > 0 else 0
                 byte_rate = self._received_bytes / elapsed if elapsed > 0 else 0
                 print(f"[雷达] 已接收 {self._received_frames} 帧 | "
                       f"帧率: {frame_rate:.1f} fps | "
-                      f"bin包率: {bin_rate:.1f} 包/秒 | "
+                      f"通道包率: {channel_rate:.1f} 包/秒 | "
                       f"吞吐量: {byte_rate:,.0f} Bytes/s ({byte_rate / 1024:.2f} KB/s)")
 
         self.decode_status = self.STATE_WAITING_DLC_LOW
@@ -267,29 +267,29 @@ class MMWRaderThread(threading.Thread):
             print("串口已关闭")
 
     def get_data(
-        self, bin_id: int | None = None
+        self, channel_id: int | None = None
     ) -> list[list[complex]] | list[complex] | None:
         """获取存储的数据.
 
         Args:
-            bin_id: bin序号，如果为None则返回所有bin的数据
+            channel_id: 通道序号，如果为None则返回所有通道的数据
 
         Returns:
-            指定bin的数据列表或所有bin的数据，无效时返回None
+            指定通道的数据列表或所有通道的数据，无效时返回None
 
         """
-        if bin_id is None:
+        if channel_id is None:
             return self._data
-        if 0 <= bin_id < self._bin_num:
-            return self._data[bin_id]
+        if 0 <= channel_id < self._channel_num:
+            return self._data[channel_id]
         return None
 
     def __repr__(self) -> str:
         """返回对象的字符串表示"""
         return (
             f"MMWRaderThread("
-            f"bin_num={self._bin_num}, "
-            f"dlc={self._dlc}, "
+            f"channel_num={self._channel_num}, "
+            f"bins_per_channel={self._bins_per_channel}, "
             f"serial={self._serial.port if self._serial else 'None'}, "
             f"data_available={any(self._data)})"
         )

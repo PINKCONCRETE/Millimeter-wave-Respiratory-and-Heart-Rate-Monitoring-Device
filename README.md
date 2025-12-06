@@ -31,7 +31,7 @@ Pr---->Disp[Display]
 |-|-|
 |4Bytes|40Bytes|
 
-**SOF**: 数据长度2Bytes，bin序号1Bytes；当bin序号为0时第四字节为offset，否则为0
+**SOF**: 每个通道的频率bin数量2Bytes，通道序号1Bytes；当通道序号为0时第四字节为offset，否则为0
 **Data**: 实数2Bytes, 虚数2Bytes, 共10个复数
 
 #### 解码状态机
@@ -43,16 +43,16 @@ stateDiagram-v2
     state SOF {
         S0 : WAITING_DLC_LOW_BYTE
         S1 : WAITING_DLC_HIGH_BYTE
-        S2 : WAITING_BIN_ID
+        S2 : WAITING_CHANNEL_ID
         S3 : WAITING_OFFSET
 
-        S0 --> S1 : dlc_low_byte
+        S0 --> S1 : bins_count_low_byte
         S0 --> S0 : else
 
-        S1 --> S2 : dlc_high_byte
+        S1 --> S2 : bins_count_high_byte
         S1 --> S0 : else
 
-        S2 --> S3 : bin_id == 0
+        S2 --> S3 : channel_id == 0
         S2 --> S4 : else
 
         S4 --> D0 : 0 / i = 0
@@ -95,13 +95,14 @@ stateDiagram-v2
 **主要功能：**
 
 - 基于状态机的帧解码
-- 支持8个bin × 10个复数的数据采集
+- 支持8个通道 × 每通道10个频率bin的数据采集
 - 线程安全的队列输出
 - 自动处理小端序数据
 
 ### mmw_processor.py
 
 毫米波雷达数据处理模块，从雷达线程获取FFT数据并生成SCG（心冲击图）波形。
+只使用通道0的数据进行处理（其他通道在实际检测中数据差别不大）。
 
 **核心算法：**
 

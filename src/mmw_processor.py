@@ -16,11 +16,12 @@ class MMWProcessorThread(threading.Thread):
 
     从雷达线程的队列中获取FFT数据，实时生成SCG波形。
     使用7点加权差分算法计算相位的二阶导数。
+    只使用通道0的数据进行处理。
 
     Attributes:
-        bin_num: bin数量（默认8）
-        dlc: 每帧的复数数量（默认10）
-        buffer_size: 滑动窗口大小（默认50帧）
+        channel_num: 通道数量（默认8）
+        bins_per_channel: 每个通道的频率bin数量（默认10）
+        buffer_size: 滑动窗口大小（默认1000帧）
 
     """
 
@@ -34,8 +35,8 @@ class MMWProcessorThread(threading.Thread):
         self,
         input_queue: Queue,
         output_queue: Queue | None = None,
-        bin_num: int = 8,
-        dlc: int = 10,
+        channel_num: int = 8,
+        bins_per_channel: int = 10,
         buffer_size: int = 1000,
         callback: Callable[[np.ndarray, int], None] | None = None,
     ) -> None:
@@ -44,8 +45,8 @@ class MMWProcessorThread(threading.Thread):
         Args:
             input_queue: 输入队列，接收雷达FFT数据
             output_queue: 输出队列，发送处理后的SCG波形（可选）
-            bin_num: bin数量（默认8）
-            dlc: 每帧复数数量（默认10）
+            channel_num: 通道数量（默认8）
+            bins_per_channel: 每个通道的频率bin数量（默认10）
             buffer_size: 滑动窗口大小（默认1000帧）
             callback: 可选回调函数 callback(waveform, frame_idx)
 
@@ -54,8 +55,8 @@ class MMWProcessorThread(threading.Thread):
 
         self._input_queue = input_queue
         self._output_queue = output_queue or Queue()
-        self._bin_num = bin_num
-        self._dlc = dlc
+        self._channel_num = channel_num
+        self._bins_per_channel = bins_per_channel
         self._buffer_size = buffer_size
         self._callback = callback
 
@@ -64,14 +65,14 @@ class MMWProcessorThread(threading.Thread):
         
         # 初始化缓冲区为1000个零帧（用于算法预热，但不输出）
         if buffer_size == 1000:
-            # 创建零值帧：(8 bins, 10 dlc) 复数零矩阵
-            zero_frame = np.zeros((bin_num, dlc), dtype=complex)
+            # 创建零值帧：(8 channels, 10 bins) 复数零矩阵
+            zero_frame = np.zeros((channel_num, bins_per_channel), dtype=complex)
             for _ in range(1000):
                 self._frame_buffer.append(zero_frame.copy())
 
         # 状态跟踪
-        self._received_bins = 0  # 接收的bin包数
-        self._completed_frames = 0  # 接收的完整帧数（8个bin = 1帧）
+        self._received_channels = 0  # 接收的通道包数
+        self._completed_frames = 0  # 接收的完整帧数（8个通道 = 1帧）
         self._generated_scg_points = 0  # 生成的SCG数据点数
         self._current_max_bin = 0  # 当前能量最大的bin编号
         self._running = True
@@ -106,30 +107,30 @@ class MMWProcessorThread(threading.Thread):
         if self._start_time is None:
             self._start_time = time.time()
         
-        bin_id = frame_data["bin_id"]
+        channel_id = frame_data["channel_id"]
         data = np.array(frame_data["data"])
         
-        # 统计接收的bin包数
-        self._received_bins += 1
+        # 统计接收的通道包数
+        self._received_channels += 1
         
-        # 帧同步：bin 0 表示新一轮开始
-        if bin_id == 0:
+        # 帧同步：通道 0 表示新一轮开始
+        if channel_id == 0:
             # 首次接收数据提示
             if self._completed_frames == 0 and np.any(data != 0):
-                print("接收到第一帧真实数据，Bin 0")
+                print("接收到第一帧真实数据，通道 0")
 
             # 创建新帧（滑动窗口自动删除最旧的帧）
-            current_frame = np.zeros((self._bin_num, self._dlc), dtype=complex)
-            current_frame[bin_id] = data
+            current_frame = np.zeros((self._channel_num, self._bins_per_channel), dtype=complex)
+            current_frame[channel_id] = data
             self._frame_buffer.append(current_frame)
         elif len(self._frame_buffer) > 0:
-            # 更新当前帧的bin数据
-            self._frame_buffer[-1][bin_id] = data
+            # 更新当前帧的通道数据
+            self._frame_buffer[-1][channel_id] = data
         else:
-            return  # 等待bin 0开始
+            return  # 等待通道 0开始
 
-        # 完整帧接收完毕（0-7号bin都收到）
-        if bin_id == self._bin_num - 1:
+        # 完整帧接收完毕（0-7号通道都收到）
+        if channel_id == self._channel_num - 1:
             self._completed_frames += 1
             
             # 每100帧打印一次统计
@@ -194,10 +195,10 @@ class MMWProcessorThread(threading.Thread):
         if len(self._frame_buffer) < self.MIN_BUFFER_SIZE:
             return None
 
-        # 转换为numpy数组: (samples=1000, bins=8, dlc=10)
+        # 转换为numpy数组: (samples=1000, channels=8, bins=10)
         fft_data = np.array(self._frame_buffer)
 
-        # 找能量最大的频率bin
+        # 找能量最大的频率bin（仅在通道0中查找）
         max_bin_idx = self._find_max_energy_bin(fft_data)
 
         # 提取相位数据
@@ -213,9 +214,16 @@ class MMWProcessorThread(threading.Thread):
         return scg_waveform
 
     def _find_max_energy_bin(self, fft_data: np.ndarray) -> int:
-        """找到能量最大的频率bin索引."""
-        # 计算每个频率bin的总能量
-        energies = [np.sum(np.abs(fft_data[:, 0, i])) for i in range(fft_data.shape[-1])]
+        """找到通道0中能量最大的频率bin索引.
+        
+        Args:
+            fft_data: 形状为(1000, 8, 10)的数组，分别是帧数、通道数、频率bin数
+            
+        Returns:
+            通道0中能量最大的频率bin的索引(0-9)
+        """
+        # 只计算通道0的每个频率bin的总能量
+        energies = [np.sum(np.abs(fft_data[:, 0, i])) for i in range(self._bins_per_channel)]
         max_bin_idx = int(np.argmax(energies))
         self._current_max_bin = max_bin_idx  # 保存当前最大能量bin编号
         return max_bin_idx
@@ -284,7 +292,7 @@ class MMWProcessorThread(threading.Thread):
         elapsed = time.time() - self._start_time if self._start_time else 0
         return {
             "completed_frames": self._completed_frames,
-            "received_bins": self._received_bins,
+            "received_channels": self._received_channels,
             "generated_scg_points": self._generated_scg_points,
             "buffer_size": len(self._frame_buffer),
             "max_buffer_size": self._buffer_size,
