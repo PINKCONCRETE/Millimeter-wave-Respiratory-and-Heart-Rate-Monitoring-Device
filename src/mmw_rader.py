@@ -78,6 +78,9 @@ class MMWRaderThread(threading.Thread):
         self._received_channels = 0  # 接收的通道包数
         self._received_bytes = 0  # 接收的字节数
         self._start_time = None
+        
+        # 线程控制
+        self._running = False
 
     @staticmethod
     def _init_serial(port: str, baudrate: int) -> serial.Serial | None:
@@ -239,10 +242,11 @@ class MMWRaderThread(threading.Thread):
             print("错误：串口未初始化")
             return
 
+        self._running = True
         print(f"开始从 {self._serial.port} 读取数据...")
 
         try:
-            while True:
+            while self._running:
                 # 批量读取可用数据，提高效率
                 waiting = self._serial.in_waiting
                 if waiting > 0:
@@ -252,14 +256,22 @@ class MMWRaderThread(threading.Thread):
                     # 逐字节解码
                     for byte in byte_data:
                         self.decode(byte)
+                        if not self._running:  # 支持在解码过程中中断
+                            break
                 else:
                     # 没有数据时短暂休眠，避免CPU空转
                     time.sleep(0.0001)  # 0.1ms
         except KeyboardInterrupt:
-            print("\n停止接收数据")
+            print("\n接收到中断信号，停止接收数据...")
+            self.stop()
         finally:
             self._close_serial()
 
+    def stop(self) -> None:
+        """停止线程运行"""
+        print("正在停止雷达线程...")
+        self._running = False
+    
     def _close_serial(self) -> None:
         """关闭串口连接"""
         if self._serial and self._serial.is_open:
