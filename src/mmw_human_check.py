@@ -333,10 +333,15 @@ class MMWHumanCheckThread(threading.Thread):
         self._human_checker = HumanCheck()
 
         # 状态跟踪
-        self._received_frames = 0
+        self._received_channels = 0
+        self._completed_frames = 0
         self._has_human = False
         self._running = True
         self._start_time = None
+        
+        # 当前帧缓冲（用于累积8个通道的数据）
+        self._current_frame = None
+        self._current_offset = 0
 
         # 历史记录
         self._detection_history = deque(maxlen=100)  # 最近100帧检测结果
@@ -369,48 +374,66 @@ class MMWHumanCheckThread(threading.Thread):
         """处理单帧FFT数据.
 
         Args:
-            frame_data: 包含FFT数据的字典，格式为 {'fft_data': ndarray, 'channel_id': int, ...}
+            frame_data: 包含FFT数据的字典，格式为 {'channel_id': int, 'data': ndarray, 'offset': int}
 
         """
-        # 提取FFT数据和offset
-        fft_data = frame_data.get("fft_data")
-        offset = frame_data.get("offset", 0)
-
-        if fft_data is None:
+        channel_id = frame_data.get("channel_id")
+        data = frame_data.get("data")
+        
+        if channel_id is None or data is None:
             return
-
+        
+        # 统计接收的通道包数
+        self._received_channels += 1
+        
         # 确保数据是ndarray
-        if not isinstance(fft_data, np.ndarray):
-            fft_data = np.array(fft_data, dtype=complex)
-
-        # 计算当前帧每个bin的能量（对所有通道求和）
-        # fft_data shape: (channel_num, bins_per_channel)
-        energies = np.sum(np.abs(fft_data), axis=0).tolist()
-
-        # 执行人体检测
-        has_human = self._human_checker.do_human_check(energies, offset)
-
-        self._has_human = has_human
-        self._received_frames += 1
-        self._detection_history.append(has_human)
-
-        # 构造输出结果
-        result = {
-            "has_human": has_human,
-            "frame_count": self._received_frames,
-            "offset": offset,
-            "detection_rate": sum(self._detection_history) / len(self._detection_history)
-            if self._detection_history
-            else 0.0,
-        }
-
-        # 输出到队列
-        if not self._output_queue.full():
-            self._output_queue.put(result)
-
-        # 调用回调函数
-        if self._callback:
-            self._callback(result)
+        if not isinstance(data, np.ndarray):
+            data = np.array(data, dtype=complex)
+        
+        # 帧同步：通道 0 表示新一轮开始
+        if channel_id == 0:
+            # 保存offset
+            self._current_offset = frame_data.get("offset", 0)
+            # 创建新帧
+            self._current_frame = np.zeros((self._channel_num, self._bins_per_channel), dtype=complex)
+            self._current_frame[channel_id] = data
+        elif self._current_frame is not None:
+            # 更新当前帧的通道数据
+            self._current_frame[channel_id] = data
+        else:
+            return  # 等待通道 0开始
+        
+        # 完整帧接收完毕（0-7号通道都收到）
+        if channel_id == self._channel_num - 1 and self._current_frame is not None:
+            self._completed_frames += 1
+            
+            # 计算当前帧每个bin的能量（对所有通道求和）
+            # _current_frame shape: (8, 10)
+            energies = np.sum(np.abs(self._current_frame), axis=0).tolist()
+            
+            # 执行人体检测
+            has_human = self._human_checker.do_human_check(energies, self._current_offset)
+            
+            self._has_human = has_human
+            self._detection_history.append(has_human)
+            
+            # 构造输出结果
+            result = {
+                "has_human": has_human,
+                "frame_count": self._completed_frames,
+                "offset": self._current_offset,
+                "detection_rate": sum(self._detection_history) / len(self._detection_history)
+                if self._detection_history
+                else 0.0,
+            }
+            
+            # 输出到队列
+            if not self._output_queue.full():
+                self._output_queue.put(result)
+            
+            # 调用回调函数
+            if self._callback:
+                self._callback(result)
 
     def stop(self) -> None:
         """停止处理线程."""
@@ -447,13 +470,14 @@ class MMWHumanCheckThread(threading.Thread):
         )
 
         return {
-            "received_frames": self._received_frames,
+            "completed_frames": self._completed_frames,
+            "received_channels": self._received_channels,
             "has_human": self._has_human,
             "detection_rate": detection_rate,
             "input_queue_size": self._input_queue.qsize(),
             "output_queue_size": self._output_queue.qsize(),
             "elapsed_time": elapsed,
-            "frame_rate": self._received_frames / elapsed if elapsed > 0 else 0,
+            "frame_rate": self._completed_frames / elapsed if elapsed > 0 else 0,
         }
 
     def __repr__(self) -> str:
@@ -465,7 +489,7 @@ class MMWHumanCheckThread(threading.Thread):
         )
         return (
             f"MMWHumanCheckThread("
-            f"frames={self._received_frames}, "
+            f"frames={self._completed_frames}, "
             f"has_human={self._has_human}, "
             f"detection_rate={detection_rate:.1%}, "
             f"running={self._running})"
