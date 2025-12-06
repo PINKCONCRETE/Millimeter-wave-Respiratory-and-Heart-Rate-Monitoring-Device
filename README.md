@@ -8,7 +8,9 @@
 ├── src/                      # 核心模块
 │   ├── mmw_rader.py         # 雷达数据采集
 │   ├── mmw_processor.py     # SCG波形处理
-│   └── mmw_breath.py        # 呼吸信号处理
+│   ├── mmw_breath.py        # 呼吸信号处理
+│   ├── mmw_heart_rate.py    # 心率信号处理
+│   └── mmw_human_check.py   # 人体存在检测
 ├── visuallize/              # 可视化脚本
 │   ├── visualize_scg.py     # SCG波形可视化
 │   └── visualize_breath.py  # 呼吸信号可视化
@@ -18,7 +20,9 @@
 │   ├── test_breath_throughput.py
 │   └── test_serial_rate.py
 └── source/                  # 原始算法代码
-    └── breath_old.py
+    ├── breath_old.py
+    ├── heart_rate_old.py
+    └── human_check_old.py
 ```
 
 ## Pipeline结构
@@ -221,6 +225,125 @@ radar.start()
 breath.start()
 ```
 
+### mmw_heart_rate.py
+
+毫米波心率信号处理模块，从雷达线程获取FFT数据并生成心率和心率变异性（HRV）信息。
+基于 `heart_rate_old.py` 改编，集成到流水线架构中。
+
+**核心算法：**
+
+1. **能量最大bin选择**：在通道0中选择能量最强的频率bin
+2. **相位提取与展开**：使用`np.unwrap`消除2π周期性跳变
+3. **7点加权二阶导数**：生成SCG（心冲击图）波形
+4. **异常值过滤**：阈值 ±1500
+5. **带通滤波**：20-40 Hz，使用Butterworth滤波器
+6. **峰值检测**：识别心跳峰值
+7. **RR间期计算**：计算峰值间时间间隔
+8. **心率计算**：基于RR间期计算心率（bpm）
+9. **HRV指标**：计算SDNN、RMSSD、pNN50
+
+**输出数据：**
+
+```python
+hr_dict = {
+    'heart_rate': 72.5,               # 心率（bpm）
+    'rr_intervals': [0.8, 0.85, ...], # RR间期数组（秒）
+    'hrv_sdnn': 45.2,                 # SDNN标准差（ms）
+    'hrv_rmssd': 38.6,                # RMSSD均方根（ms）
+    'hrv_pnn50': 12.5,                # pNN50百分比（%）
+    'peak_count': 12,                 # 检测到的峰值数
+    'scg_waveform': [...],            # 最近100个SCG点
+    'max_bin': 3,                     # 能量最大的bin
+    'frame_idx': 1000,                # 帧编号
+    'timestamp': 5.0                  # 时间戳（秒）
+}
+```
+
+**使用示例：**
+
+```python
+from queue import Queue
+from mmw_rader import MMWRaderThread
+from mmw_heart_rate import MMWHeartRateThread
+
+# 创建数据队列
+data_queue = Queue()
+
+# 启动雷达线程
+radar = MMWRaderThread(
+    output_queue=data_queue,
+    serial_port="COM7",
+    serial_baudrate=921600
+)
+
+# 启动心率处理线程
+heart_rate = MMWHeartRateThread(
+    input_queue=data_queue,
+    buffer_size=1000,  # 5秒数据缓冲
+    callback=lambda hr_dict: print(f"心率: {hr_dict['heart_rate']:.1f} bpm")
+)
+
+radar.start()
+heart_rate.start()
+```
+
+### mmw_human_check.py
+
+毫米波人体存在检测模块，从雷达线程获取FFT数据并判断是否有人存在。
+基于 `human_check_old.py` 改编，集成到流水线架构中。
+
+**核心算法：**
+
+1. **波动检测（HumanCheckByWave）**：
+   - 累积一定帧数，判断能量波动是否超过阈值
+   - 支持微动检测（小幅度长时间）和大动检测（大幅度短时间）
+
+2. **峰值检测（HumanCheckByPeak）**：
+   - 判断FFT峰值是否超过预设阈值
+   - 使用45个bin的阈值表进行分级判断
+
+3. **综合判断（HumanCheck）**：
+   - 结合3种检测方法（小波动、大波动、峰值）
+   - 至少2种方法判断有人时才确认有人存在
+
+**输出数据：**
+
+```python
+result = {
+    'has_human': True,          # 是否检测到人体
+    'frame_count': 1523,        # 已接收帧数
+    'offset': 0,                # 检测窗口偏移
+    'detection_rate': 0.85      # 最近100帧的检测率
+}
+```
+
+**使用示例：**
+
+```python
+from queue import Queue
+from mmw_rader import MMWRaderThread
+from mmw_human_check import MMWHumanCheckThread
+
+# 创建数据队列
+data_queue = Queue()
+
+# 启动雷达线程
+radar = MMWRaderThread(
+    output_queue=data_queue,
+    serial_port="COM7",
+    serial_baudrate=921600
+)
+
+# 启动人体检测线程
+human_check = MMWHumanCheckThread(
+    input_queue=data_queue,
+    callback=lambda result: print(f"有人: {result['has_human']}")
+)
+
+radar.start()
+human_check.start()
+```
+
 ### visualize_scg.py
 
 实时可视化SCG波形，支持滑动窗口显示（默认1000个数据点）。
@@ -243,6 +366,43 @@ conda activate breath
 python visuallize/visualize_breath.py
 ```
 
+### visualize_heart_rate.py
+
+实时可视化心率监测数据，包括SCG波形、心率趋势、HRV指标（SDNN、RMSSD、pNN50）。
+
+**功能特点：**
+
+- SCG波形实时显示（1000点滑动窗口）
+- 心率趋势曲线（最近50次记录）
+- HRV指标动态图表
+- 实时统计信息面板
+
+**运行方式：**
+
+```bash
+conda activate breath
+python visuallize/visualize_heart_rate.py
+```
+
+### visualize_human_check.py
+
+实时可视化人体存在检测状态，包括检测状态指示器、检测率趋势、历史时间线。
+
+**功能特点：**
+
+- 圆形状态指示器（绿色=有人，红色=无人）
+- 检测率趋势曲线（百分比）
+- 检测历史时间线（最近200帧）
+- Offset变化监测
+- 统计信息面板
+
+**运行方式：**
+
+```bash
+conda activate breath
+python visuallize/visualize_human_check.py
+```
+
 ## 测试脚本
 
 所有测试脚本位于 `test/` 目录下：
@@ -259,6 +419,9 @@ python test/test_breath_throughput.py
 
 # 测试串口数据接收速率
 python test/test_serial_rate.py
+
+# 测试心率和人体检测模块
+python test/test_heart_rate_human_check.py
 ```
 
 ## 环境配置
@@ -285,4 +448,18 @@ pip install pyserial numpy matplotlib scipy
 ```text
 雷达硬件 → 串口 → MMWRaderThread → Queue → MMWBreathThread → 呼吸波形/周期 → 可视化
           (解码)                    (FFT)   (相位处理+峰谷检测)
+```
+
+### 心率处理流水线
+
+```text
+雷达硬件 → 串口 → MMWRaderThread → Queue → MMWHeartRateThread → 心率/HRV → 输出
+          (解码)                    (FFT)   (相位二阶导数+峰值检测)
+```
+
+### 人体检测流水线
+
+```text
+雷达硬件 → 串口 → MMWRaderThread → Queue → MMWHumanCheckThread → 人体存在判断 → 输出
+          (解码)                    (FFT)     (能量波动+峰值检测)
 ```
