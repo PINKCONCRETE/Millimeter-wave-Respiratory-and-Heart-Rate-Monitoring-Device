@@ -135,16 +135,16 @@ class MMWHeartRateThread(threading.Thread):
         if channel_id == self._channel_num - 1:
             self._completed_frames += 1
             
-            # 每100帧处理一次心率
-            if self._completed_frames % 100 == 0:
+            # 每1000帧处理一次心率并打印日志
+            if self._completed_frames % 1000 == 0:
                 import time
                 elapsed = time.time() - self._start_time if self._start_time else 0
                 frame_rate = self._completed_frames / elapsed if elapsed > 0 else 0
                 print(f"[心率] 已接收 {self._completed_frames} 完整帧 | 帧率: {frame_rate:.1f} fps")
-            
-            # 缓冲区满后，生成心率信息
-            if len(self._frame_buffer) >= self.MIN_BUFFER_SIZE:
-                self._calculate_heart_rate()
+                
+                # 只在1000帧时计算心率(缓冲区已满的情况下)
+                if len(self._frame_buffer) >= self.MIN_BUFFER_SIZE:
+                    self._calculate_heart_rate()
 
     def _calculate_heart_rate(self) -> None:
         """基于当前1000帧窗口计算心率和HRV指标."""

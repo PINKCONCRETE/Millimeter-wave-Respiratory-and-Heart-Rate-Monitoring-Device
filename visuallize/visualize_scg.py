@@ -16,7 +16,7 @@ from matplotlib.animation import FuncAnimation
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.mmw_processor import MMWProcessorThread  # noqa: E402
-from src.mmw_rader import MMWRaderThread  # noqa: E402
+from src.mmw_rader import MMWRadarThread  # noqa: E402
 
 
 class SCGVisualizer:
@@ -207,7 +207,7 @@ def main() -> None:
 
     # 创建雷达线程
     print("\n初始化雷达线程...")
-    radar_thread = MMWRaderThread(
+    radar_thread = MMWRadarThread(
         output_queue=data_queue,
         serial_port=serial_port,
         serial_baudrate=baudrate,

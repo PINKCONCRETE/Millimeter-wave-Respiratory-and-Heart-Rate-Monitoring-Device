@@ -11,7 +11,7 @@ from queue import Queue
 import serial
 
 
-class MMWRaderThread(threading.Thread):
+class MMWRadarThread(threading.Thread):
     """毫米波雷达数据采集线程（生产者）.
 
     通过串口连接毫米波雷达，接收并解码原始数据帧。
@@ -55,7 +55,7 @@ class MMWRaderThread(threading.Thread):
         """
         super().__init__()
 
-        self._serial = MMWRaderThread._init_serial(serial_port, serial_baudrate)
+        self._serial = MMWRadarThread._init_serial(serial_port, serial_baudrate)
         self._channel_num = channel_num
         self._bins_per_channel = bins_per_channel
         self._output_queue = output_queue or Queue()
@@ -78,7 +78,7 @@ class MMWRaderThread(threading.Thread):
         self._received_channels = 0  # 接收的通道包数
         self._received_bytes = 0  # 接收的字节数
         self._start_time = None
-        
+    
         # 线程控制
         self._running = False
 
@@ -309,6 +309,6 @@ class MMWRaderThread(threading.Thread):
 
 if __name__ == "__main__":
     # 示例用法
-    radar = MMWRaderThread(serial_port="COM7")
+    radar = MMWRadarThread(serial_port="COM7")
     print(radar)
     # radar.start()  # 取消注释以启动数据采集

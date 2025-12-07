@@ -1,28 +1,247 @@
-# 毫米波呼吸心率监测设备
+# 毫米波健康监测系统 🌟
 
-一个基于毫米波雷达的心率、呼吸等生理指标的监测算法
+一个基于毫米波雷达的**实时健康监测系统**，支持呼吸率、心率等生理指标的监测、存储与可视化。
 
-## 项目结构
+![](https://img.shields.io/badge/Python-3.10+-blue)
+![](https://img.shields.io/badge/Vue3-TypeScript-green)
+![](https://img.shields.io/badge/Flask-3.0-red)
+![](https://img.shields.io/badge/SQLite-3-orange)
+
+## ✨ 特性
+
+- 🎯 **实时监测**：呼吸率、心率、心率变异性（HRV）、心律失常检测
+- 📊 **数据可视化**：基于 ECharts 的动态波形图表
+- 💾 **数据存储**：SQLite数据库，支持波形数据和历史查询
+- 🔄 **流水线架构**：多线程并行处理，雷达→处理→数据库完整流程
+- 🌐 **Web界面**：Vue3前端，响应式设计
+- 🛡️ **类型安全**：Vue3 + TypeScript 前端架构
+- 📈 **采样率**：200Hz高精度采样，每秒200个数据点
+
+## 🚀 快速开始
+
+### 方式1: 一键启动流水线（推荐）
+
+**Windows:**
+```bash
+# 双击运行或命令行执行
+start_pipeline.bat
+```
+
+**Linux/macOS:**
+```bash
+chmod +x start_pipeline.sh
+./start_pipeline.sh
+```
+
+**或使用Python命令:**
+```bash
+python src/run_pipeline.py --uid 0 --port COM7 --baudrate 921600
+```
+
+### 方式2: 分步启动（开发调试）
+
+**1. 安装Python依赖**
+```bash
+pip install -r requirements.txt
+```
+
+**2. 启动数据采集流水线**
+```bash
+python src/run_pipeline.py
+```
+
+**3. 启动Flask后端API**
+```bash
+cd backend
+python app.py
+```
+
+**4. 启动Vue前端**
+```bash
+cd frontend
+npm install
+npm run dev
+# 后端运行在 http://localhost:5000
+
+# 3. 启动Vue前端（新终端）
+cd frontend
+npm install
+npm run dev
+# 前端运行在 http://localhost:5173
+
+# 4. 运行服务端数据采集（新终端，需要雷达硬件）
+cd src
+python main_with_backend.py
+```
+
+### 方式2: 测试数据推送（无需硬件）
+
+```bash
+# 1. 启动后端
+cd backend
+python app.py
+
+# 2. 测试数据推送
+cd src
+python test_backend_push.py
+
+# 3. 启动前端查看数据
+cd frontend
+npm run dev
+```
+
+详细文档：[QUICKSTART.md](QUICKSTART.md) | [src/README_BACKEND_INTEGRATION.md](src/README_BACKEND_INTEGRATION.md)
+
+## 📁 项目结构
 
 ```text
-├── src/                      # 核心模块
-│   ├── mmw_rader.py         # 雷达数据采集
-│   ├── mmw_processor.py     # SCG波形处理
-│   ├── mmw_breath.py        # 呼吸信号处理
-│   ├── mmw_heart_rate.py    # 心率信号处理
-│   └── mmw_human_check.py   # 人体存在检测
-├── visuallize/              # 可视化脚本
-│   ├── visualize_scg.py     # SCG波形可视化
-│   └── visualize_breath.py  # 呼吸信号可视化
-├── test/                    # 测试脚本
-│   ├── test_decode_rate.py
-│   ├── test_processor_throughput.py
-│   ├── test_breath_throughput.py
-│   └── test_serial_rate.py
-└── source/                  # 原始算法代码
-    ├── breath_old.py
-    ├── heart_rate_old.py
-    └── human_check_old.py
+📦 Millimeter-wave-Respiratory-and-Heart-Rate-Monitoring-Device/
+├── 📂 backend/                  # Flask后端 + 数据库 ⭐ 新增
+│   ├── app.py                  # Flask应用主文件
+│   ├── config.py               # 配置文件
+│   ├── models.py               # 数据库模型（SQLAlchemy）
+│   ├── database.py             # 数据库管理类
+│   ├── routes/                 # API路由
+│   │   ├── breath.py           # 呼吸相关API
+│   │   ├── heart.py            # 心率相关API
+│   │   └── history.py          # 历史数据API
+│   ├── data/                   # SQLite数据库目录
+│   │   └── mmw_monitor.db      # 数据库文件（自动生成）
+│   ├── example_client.py       # API调用示例
+│   ├── test_api.py             # API测试工具
+│   ├── manage_db.py            # 数据库管理工具
+│   └── README.md               # 后端文档
+├── 📂 src/                      # 服务端数据处理模块
+│   ├── mmw_rader.py            # 雷达数据采集
+│   ├── mmw_processor.py        # SCG波形处理
+│   ├── mmw_breath.py           # 呼吸信号处理
+│   ├── mmw_heart_rate.py       # 心率信号处理
+│   ├── mmw_human_check.py      # 人体存在检测
+│   ├── mmw_backend_pusher.py   # 后端数据推送 ⭐ 新增
+│   ├── main_with_backend.py    # 主程序（带推送）⭐ 新增
+│   ├── test_backend_push.py    # 推送测试工具 ⭐ 新增
+│   └── README_BACKEND_INTEGRATION.md  # 集成文档 ⭐
+├── 📂 frontend/                 # Vue3前端（Web界面）
+│   ├── src/                    # 源码
+│   │   ├── api/                # API接口定义
+│   │   ├── components/         # Vue组件
+│   │   ├── router/             # 路由配置
+│   │   ├── store/              # 状态管理
+│   │   └── views/              # 页面视图
+│   ├── public/                 # 静态资源
+│   └── package.json            # 项目配置
+├── 📂 source/                   # 旧代码（保留参考）
+├── 📂 visualize/               # 可视化脚本
+├── 📂 test/                    # 测试脚本
+├── 📂 firmware/                # 固件文件
+├── requirements.txt            # Python依赖
+├── QUICKSTART.md              # 快速开始
+└── README.md                  # 本文件
+```
+
+## 🏗️ 系统架构
+
+### 完整数据流程
+
+```text
+┌──────────────┐
+│  毫米波雷达   │ 串口数据
+│  (硬件传感器) │
+└──────┬───────┘
+       │
+       ↓ 200Hz FFT数据
+┌──────────────────────────────────┐
+│  服务端数据处理 (src/)            │
+│  ├─ mmw_rader.py (数据采集)      │
+│  ├─ mmw_processor.py (SCG处理)   │
+│  ├─ mmw_breath.py (呼吸处理)     │
+│  ├─ mmw_heart_rate.py (心率处理) │
+│  └─ mmw_human_check.py (人体检测)│
+└──────┬───────────────────────────┘
+       │ 处理结果
+       ↓
+┌──────────────────────────────────┐
+│  异步数据推送 (mmw_backend_pusher)│
+│  - 批量推送波形数据（200点/秒）   │
+│  - 实时推送指标数据               │
+└──────┬───────────────────────────┘
+       │ HTTP POST/PUT
+       ↓
+┌──────────────────────────────────┐
+│  Flask后端 (backend/)             │
+│  ├─ RESTful API                  │
+│  ├─ 数据验证                     │
+│  └─ 业务逻辑                     │
+└──────┬───────────────────────────┘
+       │ ORM操作
+       ↓
+┌──────────────────────────────────┐
+│  SQLite数据库                     │
+│  ├─ 用户信息                     │
+│  ├─ 波形数据（200Hz采样）         │
+│  ├─ 指标数据（心率、呼吸率等）    │
+│  └─ 历史统计                     │
+└──────┬───────────────────────────┘
+       │ HTTP GET
+       ↓
+┌──────────────────────────────────┐
+│  Vue3前端 (frontend/)             │
+│  ├─ 实时波形展示                 │
+│  ├─ 历史数据查询                 │
+│  └─ 统计图表                     │
+└──────────────────────────────────┘
+```
+
+### 技术栈
+
+**后端 (backend/)**
+- Flask 3.0 - Web框架
+- SQLAlchemy - ORM
+- SQLite - 数据库
+- Flask-CORS - 跨域支持
+
+**服务端 (src/)**
+- PySerial - 串口通信
+- NumPy - 数值计算
+- SciPy - 信号处理
+- Requests - HTTP客户端
+
+**前端 (frontend/)**
+- Vue 3 - 渐进式框架
+- TypeScript - 类型安全
+- Vite - 构建工具
+- ECharts - 图表库
+- Element Plus - UI组件
+└─────────────────────────────────────┘
+```
+
+### 后端（Flask + Python）
+
+```
+┌─────────────────────────────────────┐
+│         Flask 3.0 API 服务          │
+├─────────────────────────────────────┤
+│  • CORS 跨域支持                    │
+│  • SSE 实时推送                     │
+│  • 多线程数据处理                   │
+│  • JSON API (code: 20000)          │
+└─────────────────────────────────────┘
+```
+
+### 数据处理流程
+
+```mermaid
+graph LR
+    A[毫米波雷达] -->|串口数据| B[DataLoader]
+    B -->|原始帧| C[Decoder]
+    C -->|解码数据| D[Processor]
+    D -->|SCG波形| E1[呼吸处理]
+    D -->|SCG波形| E2[心率处理]
+    D -->|雷达点| E3[人体检测]
+    E1 -->|呼吸数据| F[Flask缓存]
+    E2 -->|心率数据| F
+    E3 -->|在床状态| F
+    F -->|SSE推送| G[前端展示]
 ```
 
 ## Pipeline结构

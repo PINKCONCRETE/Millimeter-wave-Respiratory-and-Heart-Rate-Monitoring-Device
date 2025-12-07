@@ -18,7 +18,7 @@ from matplotlib.patches import Circle
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.mmw_human_check import MMWHumanCheckThread  # noqa: E402
-from src.mmw_rader import MMWRaderThread  # noqa: E402
+from src.mmw_rader import MMWRadarThread  # noqa: E402
 
 # 处理中文和负号显示问题
 plt.rcParams["font.sans-serif"] = ["SimHei"]  # 中文字体
@@ -291,7 +291,7 @@ class HumanCheckVisualizer:
 
         # 启动雷达线程
         print(f"正在连接雷达设备: {serial_port} @ {serial_baudrate} bps")
-        radar_thread = MMWRaderThread(
+        radar_thread = MMWRadarThread(
             output_queue=data_queue,
             serial_port=serial_port,
             serial_baudrate=serial_baudrate,
