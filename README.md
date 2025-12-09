@@ -7,6 +7,13 @@
 ![](https://img.shields.io/badge/Flask-3.0-red)
 ![](https://img.shields.io/badge/SQLite-3-orange)
 
+# 快速使用
+```bash
+./start_server.sh
+./start_backend.sh
+./start_frontend.sh
+```
+
 ## ✨ 特性
 
 - 🎯 **实时监测**：呼吸率、心率、心率变异性（HRV）、心律失常检测
