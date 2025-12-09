@@ -73,6 +73,7 @@ class MMWProcessorThread(threading.Thread):
         # 状态跟踪
         self._received_channels = 0  # 接收的通道包数
         self._completed_frames = 0  # 接收的完整帧数（8个通道 = 1帧）
+        self._last_completed_frames = 0  # 上次统计的完整帧数
         self._generated_scg_points = 0  # 生成的SCG数据点数
         self._current_max_bin = 0  # 当前能量最大的bin编号
         self._running = True
@@ -135,11 +136,14 @@ class MMWProcessorThread(threading.Thread):
             
             # 每100帧打印一次统计
             if self._completed_frames % 100 == 0:
-                elapsed = time.time() - self._start_time
-                frame_rate = self._completed_frames / elapsed if elapsed > 0 else 0
+                current_time = time.time()
+                elapsed = current_time - self._start_time
+                frame_rate = (self._completed_frames - self._last_completed_frames) / elapsed if elapsed > 0 else 0
                 print(f"[处理器] 已接收 {self._completed_frames} 完整帧 | "
                       f"帧率: {frame_rate:.1f} fps | "
                       f"已生成 {self._generated_scg_points} 个SCG点")
+                self._last_completed_frames = self._completed_frames
+                self._start_time = current_time
             
             # 缓冲区满后，每接收一帧就生成一个新的SCG点
             if len(self._frame_buffer) >= self.MIN_BUFFER_SIZE:

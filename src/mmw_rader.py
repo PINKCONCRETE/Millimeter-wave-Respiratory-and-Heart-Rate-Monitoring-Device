@@ -75,8 +75,11 @@ class MMWRadarThread(threading.Thread):
 
         # 统计信息
         self._received_frames = 0  # 接收的完整帧数（通道 0-7全部接收）
+        self._last_received_frames = 0  # 上次统计的完整帧数
         self._received_channels = 0  # 接收的通道包数
+        self._last_received_channels = 0  # 上次统计的通道包数
         self._received_bytes = 0  # 接收的字节数
+        self._last_received_bytes = 0  # 上次统计的字节数
         self._start_time = None
     
         # 线程控制
@@ -225,14 +228,20 @@ class MMWRadarThread(threading.Thread):
 
             # 每100帧打印一次统计
             if self._received_frames % 100 == 0:
-                elapsed = time.time() - self._start_time
-                frame_rate = self._received_frames / elapsed if elapsed > 0 else 0
-                channel_rate = self._received_channels / elapsed if elapsed > 0 else 0
-                byte_rate = self._received_bytes / elapsed if elapsed > 0 else 0
+                current_time = time.time()
+                elapsed = current_time - self._start_time
+                frame_rate = (self._received_frames - self._last_received_frames) / elapsed if elapsed > 0 else 0
+                channel_rate = (self._received_channels - self._last_received_channels) / elapsed if elapsed > 0 else 0
+                byte_rate = (self._received_bytes - self._last_received_bytes) / elapsed if elapsed > 0 else 0
                 print(f"[雷达] 已接收 {self._received_frames} 帧 | "
                       f"帧率: {frame_rate:.1f} fps | "
                       f"通道包率: {channel_rate:.1f} 包/秒 | "
                       f"吞吐量: {byte_rate:,.0f} Bytes/s ({byte_rate / 1024:.2f} KB/s)")
+
+                self._last_received_frames = self._received_frames
+                self._last_received_channels = self._received_channels
+                self._last_received_bytes = self._received_bytes
+                self._start_time = current_time
 
         self.decode_status = self.STATE_WAITING_DLC_LOW
 

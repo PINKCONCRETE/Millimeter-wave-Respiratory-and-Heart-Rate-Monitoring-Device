@@ -68,10 +68,12 @@ class MMWBreathThread(threading.Thread):
         # 状态跟踪
         self._received_channels = 0
         self._completed_frames = 0
+        self._last_completed_frames = 0
         self._generated_breath_cycles = 0
         self._current_target_bin = 0  # 当前选择的能量最大bin
         self._running = True
         self._start_time = None
+        self._last_start_time = None
 
     def run(self) -> None:
         """主循环：从队列消费数据并处理."""
@@ -101,6 +103,7 @@ class MMWBreathThread(threading.Thread):
 
         if self._start_time is None:
             self._start_time = time.time()
+            self._last_start_time = self._start_time
 
         channel_id = frame_data["channel_id"]
         data = np.array(frame_data["data"])
@@ -128,13 +131,15 @@ class MMWBreathThread(threading.Thread):
 
             # 每100帧打印一次统计
             if self._completed_frames % 100 == 0:
-                elapsed = time.time() - self._start_time
-                frame_rate = self._completed_frames / elapsed if elapsed > 0 else 0
+                elapsed = time.time() - self._last_start_time
+                frame_rate = (self._completed_frames - self._last_completed_frames) / elapsed if elapsed > 0 else 0
                 print(
                     f"[呼吸处理] 已接收 {self._completed_frames} 完整帧 | "
                     f"帧率: {frame_rate:.1f} fps | "
                     f"已生成 {self._generated_breath_cycles} 个呼吸周期"
                 )
+                self._last_completed_frames = self._completed_frames
+                self._last_start_time = time.time()
 
             # 缓冲区满后，尝试生成呼吸信息
             if len(self._frame_buffer) >= self._buffer_size:

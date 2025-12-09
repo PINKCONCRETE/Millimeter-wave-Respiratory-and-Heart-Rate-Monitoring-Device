@@ -79,6 +79,7 @@ class MMWHeartRateThread(threading.Thread):
         # 状态跟踪
         self._received_channels = 0
         self._completed_frames = 0
+        self._last_completed_frames = 0
         self._generated_hr_results = 0
         self._current_max_bin = 0  # 当前能量最大bin
         self._running = True
@@ -138,10 +139,12 @@ class MMWHeartRateThread(threading.Thread):
             # 每1000帧处理一次心率并打印日志
             if self._completed_frames % 1000 == 0:
                 import time
-                elapsed = time.time() - self._start_time if self._start_time else 0
-                frame_rate = self._completed_frames / elapsed if elapsed > 0 else 0
+                current_time = time.time()
+                elapsed = current_time - self._start_time if self._start_time else 0
+                frame_rate = (self._completed_frames - self._last_completed_frames) / elapsed if elapsed > 0 else 0
                 print(f"[心率] 已接收 {self._completed_frames} 完整帧 | 帧率: {frame_rate:.1f} fps")
-                
+                self._last_completed_frames = self._completed_frames
+                self._start_time = current_time
                 # 只在1000帧时计算心率(缓冲区已满的情况下)
                 if len(self._frame_buffer) >= self.MIN_BUFFER_SIZE:
                     self._calculate_heart_rate()
