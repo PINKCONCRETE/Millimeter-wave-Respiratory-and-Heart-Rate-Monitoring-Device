@@ -116,6 +116,7 @@ let last_point = 0
 let waveformChart: ECharts | null = null
 let ringChart: ECharts | null = null
 let resizeObserver: ResizeObserver | null = null
+let last_time = 0
 
 // 折叠按钮切换
 const toggle = () => {
@@ -521,7 +522,15 @@ const waveProcessingLoop = () => {
 let cnt = 0
 const waveFetchingLoop = async () => {
   try {
-    const res = await getBWaveform(userId.value)
+    let res = await getBWaveform(userId.value)
+    while(res.data && res.data.timestamp <= last_time)
+    {
+      res = await getBWaveform(userId.value)
+    }
+    if(res.data){
+      last_time = res.data.timestamp
+    }
+    console.log("BreathMonitor waveform data:", res)
     if (res?.data) {
       if ('is_in_bed' in res.data) {
         isInBed.value = res.data.is_in_bed

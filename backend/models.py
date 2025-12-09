@@ -27,6 +27,7 @@ class UserWaveform(db.Model):
     breath_ring_y = db.Column(db.Text)  # JSON格式存储
     scg_waveform = db.Column(db.Text)  # JSON格式存储
     heart_waveform = db.Column(db.Text)  # JSON格式存储
+    timestamp = db.Column(db.DateTime, default=datetime.now)  # 波形数据时间戳
     updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
 
 class BreathData(db.Model):

@@ -44,7 +44,8 @@ def get_breath_waveform(uid):
             'data': {
                 'uid': str(uid),
                 'breath_waveform': json.loads(waveform.breath_waveform)[-200:],
-                'is_in_bed': breath_data.is_in_bed if breath_data else True
+                'is_in_bed': breath_data.is_in_bed if breath_data else True,
+                'timestamp': waveform.timestamp.timestamp() if waveform.timestamp else datetime.now().timestamp()
             }
         })
     else:
@@ -277,29 +278,46 @@ def get_heart_history():
 
 @app.route('/api/history/hr/getHrvData', methods=['POST'])
 def get_hrv_data():
-    """获取HRV数据"""
+    """获取HRV数据 - 返回最近200条HRV记录的SDNN值"""
     params = request.get_json()
     uid = int(params.get('uid', 0))
     
-    # 获取最新的HRV数据
-    hrv_record = HRVData.query.filter_by(uid=uid).order_by(HRVData.timestamp.desc()).first()
+    # 获取最近200条HRV记录
+    hrv_records = HRVData.query.filter_by(uid=uid).order_by(
+        HRVData.timestamp.desc()
+    ).limit(200).all()
     
-    if hrv_record:
-        time_stamps = json.loads(hrv_record.time_stamps)
-        hrv_data = [random.randint(20, 20000) for _ in range(len(time_stamps))]
+    if hrv_records:
+        # 反转使时间升序
+        hrv_records.reverse()
+        
+        # 提取SDNN值和时间戳
+        hrv_data = [r.hrv_value for r in hrv_records]
+        time_stamps = [r.timestamp.timestamp() for r in hrv_records]
+        is_in_bed = True  # 可以从最新的heart_data获取
         
         return jsonify({
             'code': 20000,
             'message': 'success',
             'data': {
                 'uid': str(uid),
-                'is_in_bed': True,
+                'is_in_bed': is_in_bed,
                 'time_stamp': time_stamps,
                 'hrv_data': hrv_data
             }
         })
     else:
-        return jsonify({'code': 40000, 'message': '数据不存在'}), 404
+        # 如果没有HRV数据，返回空数组
+        return jsonify({
+            'code': 20000,
+            'message': 'success',
+            'data': {
+                'uid': str(uid),
+                'is_in_bed': True,
+                'time_stamp': [],
+                'hrv_data': []
+            }
+        })
 
 
 @app.route('/api/history/hr/stat', methods=['POST'])

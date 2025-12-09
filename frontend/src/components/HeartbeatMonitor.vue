@@ -144,7 +144,8 @@ const dataFetchingLoop = async () => {
     console.log("HeartbeatMonitor waveform data:", res);
     if (res?.data) {
       const min = Math.min(...res.data.scg_waveform)
-      const newWaveform = res.data.scg_waveform.map(item => item - min)
+      //const newWaveform = res.data.scg_waveform.map(item => item - min)
+      const newWaveform = res.data.scg_waveform
       dataQueue.value.push(...newWaveform)
       status.value = res.data.isArrhythmia
       isInBed.value = res.data.is_in_bed

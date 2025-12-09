@@ -5,6 +5,7 @@ interface WaveformData {
   uid: string;
   breath_waveform: number[];
   is_in_bed: boolean;
+  timestamp: number;
 }
 
 interface RingData {

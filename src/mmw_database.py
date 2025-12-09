@@ -7,11 +7,50 @@ from datetime import datetime
 from pathlib import Path
 from queue import Empty, Queue
 
+import numpy as np
+
 backend_path = Path(__file__).parent.parent / "backend"
 sys.path.insert(0, str(backend_path))
 
 from flask import Flask
-from backend.models import db, UserWaveform, HeartData
+from backend.models import db, UserWaveform, HeartData, HRVData
+
+
+class KalmanFilter:
+    """一维卡尔曼滤波器，用于心率数据平滑."""
+    
+    def __init__(self, process_variance=1e-5, measurement_variance=1e-1, initial_value=70.0):
+        """初始化卡尔曼滤波器.
+        
+        Args:
+            process_variance: 过程噪声方差 Q
+            measurement_variance: 测量噪声方差 R
+            initial_value: 初始状态估计值
+        """
+        self.process_variance = process_variance  # Q
+        self.measurement_variance = measurement_variance  # R
+        self.posteri_estimate = initial_value  # 后验估计
+        self.posteri_error_estimate = 1.0  # 后验误差估计
+    
+    def update(self, measurement):
+        """更新滤波器并返回滤波后的值.
+        
+        Args:
+            measurement: 当前测量值
+            
+        Returns:
+            滤波后的估计值
+        """
+        # 预测步骤
+        priori_estimate = self.posteri_estimate
+        priori_error_estimate = self.posteri_error_estimate + self.process_variance
+        
+        # 更新步骤
+        kalman_gain = priori_error_estimate / (priori_error_estimate + self.measurement_variance)
+        self.posteri_estimate = priori_estimate + kalman_gain * (measurement - priori_estimate)
+        self.posteri_error_estimate = (1 - kalman_gain) * priori_error_estimate
+        
+        return self.posteri_estimate
 
 
 class UnifiedDatabaseWriter(threading.Thread):
@@ -44,6 +83,17 @@ class UnifiedDatabaseWriter(threading.Thread):
         self._heart_timestamp_buffer = []  # 对应的时间戳
         self._heart_count = 0
         self._heart_writes = 0
+        
+        # HRV相关
+        self._hrv_count = 0
+        self._hrv_writes = 0
+        
+        # 卡尔曼滤波器
+        self._kalman_filter = KalmanFilter(
+            process_variance=1e-5,
+            measurement_variance=1e-1,
+            initial_value=70.0
+        )
         
         # 人体检测相关
         self._human_status = True
@@ -171,8 +221,10 @@ class UnifiedDatabaseWriter(threading.Thread):
         if frame_idx >= 100 and frame_idx % 100 == 0 and frame_idx != self._last_wave_frame:
             waveform = UserWaveform.query.filter_by(uid=self._uid).first()
             if waveform:
+                now = datetime.now()
                 waveform.breath_waveform = json.dumps(self._breath_waveform)
-                waveform.updated_at = datetime.now()
+                waveform.timestamp = now
+                waveform.updated_at = now
                 db.session.commit()
                 self._wave_writes += 1
                 self._last_wave_frame = frame_idx
@@ -195,15 +247,20 @@ class UnifiedDatabaseWriter(threading.Thread):
             print(f"[呼吸] 接收{self._breath_count}次 | 帧{frame_idx} | 波形:{self._wave_writes} | 环:{self._ring_writes}")
     
     def _handle_heart_rate(self, data: dict):
-        """处理心率数据 - 添加到HeartData表并更新波形."""
+        """处理心率数据 - 使用卡尔曼滤波后取整再写入，同时处理HRV数据."""
         self._heart_count += 1
         
         heart_rate = data.get('heart_rate')
         if heart_rate is None or heart_rate <= 0:
             return
         
+        # 应用卡尔曼滤波
+        filtered_heart_rate = self._kalman_filter.update(heart_rate)
+        
+        # 滤波后取整
+        heart_rate_int = int(round(filtered_heart_rate))
+        
         timestamp = datetime.now()
-        heart_rate_int = int(round(heart_rate))
         
         # 写入HeartData历史表
         heart_data = HeartData(
@@ -228,11 +285,46 @@ class UnifiedDatabaseWriter(threading.Thread):
             waveform.heart_waveform = json.dumps(self._heart_waveform_buffer)
             waveform.updated_at = timestamp
         
-        # 一次性提交(包括HeartData和UserWaveform)
+        # 处理HRV数据（如果包含HRV指标）
+        hrv_sdnn = data.get('hrv_sdnn')
+        if hrv_sdnn is not None and hrv_sdnn > 0:
+            self._handle_hrv_data(data, timestamp)
+        
+        # 一次性提交(包括HeartData、UserWaveform和HRVData)
         db.session.commit()
         self._heart_writes += 1
         
-        print(f"✓ [心率] 写入 | 心率:{heart_rate_int}bpm | 累计:{self._heart_writes}")
+        print(f"✓ [心率] 原始:{heart_rate:.1f} -> 滤波:{filtered_heart_rate:.1f} -> 取整:{heart_rate_int}bpm | 累计:{self._heart_writes}")
+    
+    def _handle_hrv_data(self, data: dict, timestamp: datetime):
+        """处理HRV数据 - 写入HRVData表."""
+        self._hrv_count += 1
+        
+        # 提取HRV指标
+        hrv_sdnn = data.get('hrv_sdnn', 0.0)
+        rr_intervals = data.get('rr_intervals', [])
+        
+        if hrv_sdnn <= 0:
+            return
+        
+        # 构造时间戳列表（基于当前时间倒推RR间期）
+        time_stamps = []
+        current_time = timestamp.timestamp()
+        for i in range(len(rr_intervals)):
+            time_stamps.insert(0, current_time)
+            current_time -= rr_intervals[-(i+1)] if i < len(rr_intervals) else 0
+        
+        # 写入HRVData表
+        hrv_data = HRVData(
+            uid=self._uid,
+            timestamp=timestamp,
+            hrv_value=float(hrv_sdnn),
+            time_stamps=json.dumps(time_stamps)
+        )
+        db.session.add(hrv_data)
+        self._hrv_writes += 1
+        
+        print(f"✓ [HRV] SDNN:{hrv_sdnn:.2f}ms | RR间期数:{len(rr_intervals)} | 累计:{self._hrv_writes}")
     
     def _handle_human_check(self, has_human: bool):
         """处理人体检测数据 - 更新is_in_bed状态."""
