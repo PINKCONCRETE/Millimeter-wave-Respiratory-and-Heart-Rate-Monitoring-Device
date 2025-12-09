@@ -529,8 +529,8 @@ const waveFetchingLoop = async () => {
     }
     if(res.data){
       last_time = res.data.timestamp
+      console.log("BreathMonitor timestamp:", last_time)
     }
-    console.log("BreathMonitor waveform data:", res)
     if (res?.data) {
       if ('is_in_bed' in res.data) {
         isInBed.value = res.data.is_in_bed
