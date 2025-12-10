@@ -108,7 +108,7 @@ const waveformProcessIntervalId = ref<number | null>(null)
 const WAVEFORM_SAMPLING_RATE = 200
 const WAVEFORM_FETCH_INTERVAL = 1000
 const WAVEFORM_FETCH_CHUNK_SIZE = 200
-const WAVEFORM_PROCESS_INTERVAL = 40
+const WAVEFORM_PROCESS_INTERVAL = 38
 const WAVEFORM_PROCESS_BATCH = 8
 const MAX_WAVEFORM_POINTS = 2000
 
@@ -517,6 +517,7 @@ const waveProcessingLoop = () => {
   }
   const chunkSize = Math.min(WAVEFORM_PROCESS_BATCH, waveformQueue.value.length)
   const dataPoints = waveformQueue.value.splice(0, chunkSize)
+  console.log("WaveformQueue length:", waveformQueue.value.length, '@ Time:', Date.now() / 1000)
   appendWaveformData(dataPoints)
 }
 let cnt = 0

@@ -208,7 +208,7 @@ class UnifiedDatabaseWriter(threading.Thread):
         
         # 更新内存中的数据 - 添加None检查
         if rr_wave is not None and len(rr_wave) > 0:
-            indices = np.linspace(0, len(rr_wave)-1, 200, dtype=int)
+            indices = np.arange(len(rr_wave) - 200, len(rr_wave), 1)
             self._breath_waveform = [float(rr_wave[i]) for i in indices]
         
         if (displacement is not None and flow_rate is not None and 
