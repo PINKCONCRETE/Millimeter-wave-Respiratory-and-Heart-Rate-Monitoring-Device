@@ -277,9 +277,11 @@ class HumanCheck:
             self.check_by_bigwave.has_human(),
             self.check_by_peak.has_human(),
         ]
-
+        
+        # print(res_list[1])
         # 三种检测方法中有两种或以上判断有人，则认为有人
-        if sum(res_list) > 1:
+        #if sum(res_list) > 1:
+        if res_list[1]:
             self._has_human = True
         else:
             self._has_human = False

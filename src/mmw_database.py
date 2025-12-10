@@ -255,13 +255,23 @@ class UnifiedDatabaseWriter(threading.Thread):
             return
         
         # 应用卡尔曼滤波
-        filtered_heart_rate = self._kalman_filter.update(heart_rate)
-        
+        # filtered_heart_rate = self._kalman_filter.update(heart_rate)
+
         # 滤波后取整
-        heart_rate_int = int(round(filtered_heart_rate))
+        heart_rate_int = int(round(heart_rate))
         
         timestamp = datetime.now()
         
+        if self._heart_waveform_buffer:
+            last_hr = self._heart_waveform_buffer[-1]
+            delta_hr = heart_rate_int - last_hr
+            if abs(delta_hr) > 5:
+                heart_rate_int = last_hr + 5 * (delta_hr / abs(delta_hr))
+        # last_hr = 
+
+        # if(not self._human_status):
+            # 如果无人状态，跳过心率写入
+            # heart_rate_int = 0
         # 写入HeartData历史表
         heart_data = HeartData(
             uid=self._uid,
@@ -294,7 +304,7 @@ class UnifiedDatabaseWriter(threading.Thread):
         db.session.commit()
         self._heart_writes += 1
         
-        print(f"✓ [心率] 原始:{heart_rate:.1f} -> 滤波:{filtered_heart_rate:.1f} -> 取整:{heart_rate_int}bpm | 累计:{self._heart_writes}")
+        print(f"✓ [心率] 原始:{heart_rate:.1f} -> 滤波:{heart_rate:.1f} -> 取整:{heart_rate_int}bpm | 累计:{self._heart_writes}")
     
     def _handle_hrv_data(self, data: dict, timestamp: datetime):
         """处理HRV数据 - 写入HRVData表."""
