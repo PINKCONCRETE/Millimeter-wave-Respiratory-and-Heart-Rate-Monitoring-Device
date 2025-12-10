@@ -64,6 +64,7 @@ class HumanCheckByWave(HumanCheckBase):
     """
 
     BINS_PER_CHANNEL = 10  # 每个通道的频率bin数量
+    NEAR_PEAK_RANGE = 4 #近距离处会有一个伪峰
 
     def __init__(
         self,
@@ -109,18 +110,44 @@ class HumanCheckByWave(HumanCheckBase):
 
         need_reset_base = False
 
-        # 对比信号强度差异
-        for base, energy, bin_idx in zip(
-            self._base_energies, energies, range(offset, offset + self.BINS_PER_CHANNEL)
-        ):
-            if base < 0.001:
-                need_reset_base = True
-                break
-            diff = energy - base
-            # 基准能量大于3000时，判断相对变化是否超过容忍度
-            if base > 3000.0 and abs(diff / base) > self.tollerence:
-                self._exception_count += 1
-                break
+        #近距离的伪峰中，计算每个bin的能量波动
+        is_exception = False
+        if offset < self.NEAR_PEAK_RANGE:
+            for bin in range(offset, self.NEAR_PEAK_RANGE):
+                base = self._base_energies[bin - offset]
+                energy = energies[bin - offset]
+                diff = energy - base
+                if base > 3000. and abs(diff / base) > self.tollerence:
+                    is_exception = True
+                    break
+        
+        #从剩余bin中，找出峰值，检测能量波动（只检测强度与峰值的比例大于一定阈值的bin）
+        start_bin = self.NEAR_PEAK_RANGE if offset < self.NEAR_PEAK_RANGE else offset
+        peak = max(energies[start_bin - offset:])
+        for bin in range(start_bin, offset + self.BINS_PER_CHANNEL):
+            energy = energies[bin - offset]
+            if energy > peak * 0.5:
+                base = self._base_energies[bin - offset]
+                diff = energy - base
+                if base > 3000. and abs(diff / base) > self.tollerence:
+                    is_exception = True
+                    break
+
+        if is_exception:
+            self._exception_count += 1 
+
+        # # 对比信号强度差异
+        # for base, energy, bin_idx in zip(
+        #     self._base_energies, energies, range(offset, offset + self.BINS_PER_CHANNEL)
+        # ):
+        #     if base < 0.001:
+        #         need_reset_base = True
+        #         break
+        #     diff = energy - base
+        #     # 基准能量大于3000时，判断相对变化是否超过容忍度
+        #     if base > 3000.0 and abs(diff / base) > self.tollerence:
+        #         self._exception_count += 1
+        #         break
 
         self._accumulated_count += 1
 
@@ -280,8 +307,8 @@ class HumanCheck:
         
         # print(res_list[1])
         # 三种检测方法中有两种或以上判断有人，则认为有人
-        #if sum(res_list) > 1:
-        if res_list[1]:
+        if sum(res_list) > 1:
+        # if res_list[1]:
             self._has_human = True
         else:
             self._has_human = False
