@@ -511,12 +511,14 @@ const waveProcessingLoop = () => {
     if (waveformChart) {
       waveformChart.clear()
       waveformDisplayData.value = []
+      // waveformQueue.value = []
       waveformChart.setOption(getWaveformChartOption(waveformDisplayData.value))
     }
     return
   }
   const chunkSize = Math.min(WAVEFORM_PROCESS_BATCH, waveformQueue.value.length)
   const dataPoints = waveformQueue.value.splice(0, chunkSize)
+  console.log("WaveformQueue length:", waveformQueue.value.length, '@ Time:', Date.now() / 1000)
   appendWaveformData(dataPoints)
 }
 let cnt = 0
@@ -555,6 +557,7 @@ const waveFetchingLoop = async () => {
       }
       else
       {
+        // first_point = last_point;
         const adjustedWaveform = rawWaveform.map(point => (point - first_point + last_point));
         waveformQueue.value.push(...adjustedWaveform)
         last_point = adjustedWaveform[rawWaveform.length - 1];
@@ -574,7 +577,7 @@ const waveFetchingLoop = async () => {
 
 const startWaveformStreaming = async () => {
   if (waveformFetchIntervalId.value === null) {
-    await waveFetchingLoop()
+    // await waveFetchingLoop()
     waveformFetchIntervalId.value = window.setInterval(() => {
       waveFetchingLoop()
     }, WAVEFORM_FETCH_INTERVAL)
@@ -645,7 +648,7 @@ const updateCharts = async () => {
   try {
     await updateWarning()
     await Promise.all([
-      updateWaveform(),
+      // updateWaveform(),
       updateRing()
     ])
   } catch (error) {

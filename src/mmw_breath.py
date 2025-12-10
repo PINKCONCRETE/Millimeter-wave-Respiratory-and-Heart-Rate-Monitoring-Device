@@ -236,19 +236,21 @@ class MMWBreathThread(threading.Thread):
         unwrap_phase = np.unwrap(raw_phase)
 
         # 2. 去除基线漂移
-        corrected_signal = self._remove_baseline_drift(unwrap_phase)
+        # corrected_signal = self._remove_baseline_drift(unwrap_phase)
 
         # 3. 滑动窗口平滑
-        br_signal = self._smooth_signal(corrected_signal)
+        # br_signal = self._smooth_signal(corrected_signal)
 
         # 4. 翻转并偏移
-        br_signal = -br_signal + 1
+        # br_signal = -br_signal + 1
 
         # 5. 可选归一化
-        if normalize:
-            br_signal = (br_signal - np.min(br_signal)) / (
-                np.max(br_signal) - np.min(br_signal)
-            )
+        # if normalize:
+        #     br_signal = (br_signal - np.min(br_signal)) / (
+        #         np.max(br_signal) - np.min(br_signal)
+        #     )
+
+        return unwrap_phase
 
         return br_signal
 
