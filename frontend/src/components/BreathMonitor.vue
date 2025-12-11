@@ -113,9 +113,9 @@ const waveformProcessIntervalId = ref<number | null>(null)
 const WAVEFORM_SAMPLING_RATE = 200
 const WAVEFORM_FETCH_INTERVAL = 1000
 const WAVEFORM_FETCH_CHUNK_SIZE = 200
-const WAVEFORM_PROCESS_INTERVAL = 40
-const WAVEFORM_PROCESS_BATCH = 9
-const MAX_WAVEFORM_POINTS = 4000
+const WAVEFORM_PROCESS_INTERVAL = 80
+const WAVEFORM_PROCESS_BATCH = 20
+const MAX_WAVEFORM_POINTS = 2000
 
 let last_point = 0
 let waveformChart: ECharts | null = null
