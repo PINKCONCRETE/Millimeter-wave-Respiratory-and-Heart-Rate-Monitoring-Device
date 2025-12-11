@@ -268,14 +268,14 @@ class HumanCheck:
         # 关注是否有大量微动
         self.check_by_smallwave = HumanCheckByWave(
             accumulate_frame_count=200,
-            tollerence_frame_count=60,
-            tollerence=0.03,
+            tollerence_frame_count=20,
+            tollerence=0.02,
         )
         # 关注是否有少量大动
         self.check_by_bigwave = HumanCheckByWave(
-            accumulate_frame_count=300,
-            tollerence_frame_count=30,
-            tollerence=0.15,
+            accumulate_frame_count=200,
+            tollerence_frame_count=10,
+            tollerence=0.10,
         )
         # 关注峰值是否足够强
         self.check_by_peak = HumanCheckByPeak(
@@ -305,7 +305,7 @@ class HumanCheck:
             self.check_by_peak.has_human(),
         ]
         
-        # print(res_list[1])
+        print(res_list)
         # 三种检测方法中有两种或以上判断有人，则认为有人
         if sum(res_list) > 1:
         # if res_list[1]:
