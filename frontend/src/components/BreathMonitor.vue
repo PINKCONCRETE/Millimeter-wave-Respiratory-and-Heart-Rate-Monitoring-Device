@@ -51,7 +51,7 @@
           </div>
         </div>
 
-        <div class="ring-container">
+        <!-- <div class="ring-container">
           <div class="chart-container">
             <div class="sub-chart-title-container">
               <h3 class="sub-chart-title">流速-容量环</h3>
@@ -62,7 +62,7 @@
             </div>
             <div ref="ringChartRef" class="sub-chart-container" />
           </div>
-        </div>
+        </div> -->
       </div>
 
       <!-- ...已移除 chart-note 区域... -->
@@ -81,9 +81,15 @@ import { BarChart } from 'echarts/charts'
 import { MAX_SAFE_INTEGER } from 'echarts/types/src/util/number.js'
 import { log } from 'echarts/types/src/util/log.js'
 
+// Props 定义
+const props = defineProps<{
+  userId?: string
+  isInBed: boolean
+}>()
+
 // 路由信息
 const route = useRoute()
-const userId = computed(() => route.params.userId as string)
+const userId = computed(() => props.userId || route.params.userId as string)
 
 // 状态定义
 const isExpanded = ref(true)
@@ -98,7 +104,6 @@ const showRingInfo = ref(false)
 const showApneaInfo = ref(false)
 const showObstructionInfo = ref(false)
 const breathWarningId = ref(0)
-const isInBed = ref(true)
 const intervalId = ref<number | null>(null)
 const waveformQueue = ref<number[]>([])
 const waveformDisplayData = ref<number[]>([])
@@ -109,8 +114,8 @@ const WAVEFORM_SAMPLING_RATE = 200
 const WAVEFORM_FETCH_INTERVAL = 1000
 const WAVEFORM_FETCH_CHUNK_SIZE = 200
 const WAVEFORM_PROCESS_INTERVAL = 40
-const WAVEFORM_PROCESS_BATCH = 8
-const MAX_WAVEFORM_POINTS = 2000
+const WAVEFORM_PROCESS_BATCH = 9
+const MAX_WAVEFORM_POINTS = 4000
 
 let last_point = 0
 let waveformChart: ECharts | null = null
@@ -249,7 +254,7 @@ const getWaveformChartOption = (displayData: number[], xAxisData?: string[]) => 
         color: '#666',
         fontSize: fontSize * 0.9
       },
-      show: true,
+      show: false,
       splitLine: {
         show: true,
         lineStyle: {
@@ -277,12 +282,12 @@ const getWaveformChartOption = (displayData: number[], xAxisData?: string[]) => 
       },
       splitNumber: ySplitNumber,
       // 保留原有特殊场景的配置（优先级最高，会覆盖上面的 min/max）
-      ...(isInBed.value && breathWarningId.value === 21 && false ? {
+      ...(props.isInBed && breathWarningId.value === 21 && false ? {
         min: -1,
         max: 1
       } : {})
     },
-    series: !isInBed.value ? [] : [{
+    series: props.isInBed ? [{
       name: '呼吸波形',
       type: 'line',
       data: displayData,
@@ -301,7 +306,7 @@ const getWaveformChartOption = (displayData: number[], xAxisData?: string[]) => 
       itemStyle: {
         color: '#3B82F6'
       }
-    }]
+    }] : []
   }
 }
 
@@ -468,7 +473,7 @@ const setFlatWaveform = (value: number) => {
 }
 
 const handleSpecialWaveformStates = () => {
-  if (!isInBed.value) {
+  if (!props.isInBed) {
     setFlatWaveform(0)
     return true
   }
@@ -534,9 +539,6 @@ const waveFetchingLoop = async () => {
       console.log("BreathMonitor timestamp:", last_time)
     }
     if (res?.data) {
-      if ('is_in_bed' in res.data) {
-        isInBed.value = res.data.is_in_bed
-      }
       const rawWaveform = Array.isArray(res.data.breath_waveform) ? res.data.breath_waveform : []
       waveformData.value = rawWaveform
 
@@ -617,7 +619,7 @@ const updateRing = async () => {
         breath_ring_y: res.data.breath_ring_y || []
       }
       
-      const shouldShowData = isInBed.value && breathWarningId.value !== 21 && true
+      const shouldShowData = props.isInBed && breathWarningId.value !== 21 && true
       const seriesData = ringData.value.breath_ring_x.map((x, i) => [x, ringData.value.breath_ring_y[i]] as [number, number])
       
       if (ringChart) {
@@ -703,7 +705,7 @@ const initCharts = async () => {
   }
 }
 
-watch([isInBed, breathWarningId], () => {
+watch([() => props.isInBed, breathWarningId], () => {
   if (!handleSpecialWaveformStates()) {
     renderWaveformChart()
   }

@@ -30,9 +30,15 @@ import type { ECharts } from 'echarts'
 import { getWaveform } from '@/api/heart'
 import { calculateEchartsFontSize, calculateEchartsLineWidth } from '@/utils/echarts'
 
+// Props 定义
+const props = defineProps<{
+  userId?: string
+  isInBed: boolean
+}>()
+
 // 路由信息
 const route = useRoute()
-const userId = computed(() => route.params.userId as string)
+const userId = computed(() => props.userId || route.params.userId as string)
 
 // 状态定义
 const isExpanded = ref(true)
@@ -43,7 +49,6 @@ const intervalId = ref<number | null>(null)
 const currentIndex = ref(0)
 const nodeText = ref('常见的窦性心律失常')
 const chartData = ref<number[]>([])
-const isInBed = ref<boolean | null>(null)
 
 
 
@@ -52,7 +57,7 @@ let resizeObserver: ResizeObserver | null = null
 var displayData = [] as number[]
 // 计算属性
 const statusText = computed(() => {
-  if (isInBed.value === false) {
+  if (props.isInBed === false) {
     return '已离开'
   }
   if (status.value === -1) {
@@ -62,7 +67,7 @@ const statusText = computed(() => {
 })
 
 const statusClass = computed(() => {
-  if (isInBed.value === false) {
+  if (props.isInBed === false) {
     return 'status-out-of-bed'
   }
   if (status.value === -1) {
@@ -91,7 +96,7 @@ const getChartOption = () => {
       show: true,
       position: 'bottom',
       type: 'category',
-      data: Array.from({ length: 1000 + 1 }, (_, index) => index),
+      data: Array.from({ length: 2000 + 1 }, (_, index) => index),
       axisLabel: {
         formatter: (value: number) => {
           if (value % 200 === 0) {
@@ -118,7 +123,7 @@ const getChartOption = () => {
       type: 'value',
       show: false
     },
-    series: !isInBed.value ? [] : [{
+    series: props.isInBed ? [{
       type: 'line',
       data: displayData,
       // animationDuration: 5000,
@@ -132,7 +137,7 @@ const getChartOption = () => {
         shadowOffsetX: Math.max(1, lineWidth * 0.1),
         shadowOffsetY: Math.max(1, lineWidth * 0.1),
       },
-    }]
+    }] : []
   }
 }
 
@@ -148,7 +153,6 @@ const dataFetchingLoop = async () => {
       const newWaveform = res.data.scg_waveform
       dataQueue.value.push(...newWaveform)
       status.value = res.data.isArrhythmia
-      isInBed.value = res.data.is_in_bed
     }
   } catch (error) {
     console.error('Error fetching heart rate data:', error)
@@ -159,7 +163,7 @@ const dataProcessingLoop = () => {
   if (dataQueue.value.length >= 8) {
     const dataPoints = dataQueue.value.splice(0, 8)
     displayData.push(...dataPoints)
-    if (displayData.length > 1000) {
+    if (displayData.length > 2000) {
       displayData = []
     }
     if (chart) {

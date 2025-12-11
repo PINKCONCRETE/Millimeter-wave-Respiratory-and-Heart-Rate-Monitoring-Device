@@ -14,22 +14,22 @@
     </div>
     <!-- 竖屏单列模式 -->
     <div v-if="isPortrait" class="portrait-container">
-      <div class="portrait-item"><HeartbeatMonitor :userId="userId" /></div>
-      <div class="portrait-item"><HeartrateMonitor :userId="userId" /></div>
-      <div class="portrait-item"><BreathMonitor :userId="userId" /></div>
-      <div class="portrait-item"><HRVMonitor :userId="userId" /></div>
+      <div class="portrait-item"><HeartbeatMonitor :userId="userId" :isInBed="isInBed" /></div>
+      <div class="portrait-item"><HeartrateMonitor :userId="userId" :isInBed="isInBed" /></div>
+      <div class="portrait-item"><BreathMonitor :userId="userId" :isInBed="isInBed" /></div>
+      <div class="portrait-item"><HRVMonitor :userId="userId" :isInBed="isInBed" /></div>
     </div>
     <!-- 横屏2×2模式 -->
     <div v-else-if="mode==='grid'" class="grid-container">
-      <div class="grid-item"><HeartbeatMonitor :userId="userId" /></div>
-      <div class="grid-item"><HeartrateMonitor :userId="userId" /></div>
-      <div class="grid-item"><BreathMonitor :userId="userId" /></div>
-      <div class="grid-item"><HRVMonitor :userId="userId" /></div>
+      <div class="grid-item"><HeartbeatMonitor :userId="userId" :isInBed="isInBed" /></div>
+      <div class="grid-item"><HeartrateMonitor :userId="userId" :isInBed="isInBed" /></div>
+      <div class="grid-item"><BreathMonitor :userId="userId" :isInBed="isInBed" /></div>
+      <div class="grid-item"><HRVMonitor :userId="userId" :isInBed="isInBed" /></div>
     </div>
     <!-- 横屏1+3模式 -->
     <div v-else class="main-slave-container">
       <div class="main-panel">
-        <component :is="getComponent(mainType)" :userId="userId" />
+        <component :is="getComponent(mainType)" :userId="userId" :isInBed="isInBed" />
       </div>
       <div class="slave-panel">
         <div
@@ -38,7 +38,7 @@
           class="slave-item"
           @click="switchMain(item.type)"
         >
-          <component :is="item.component" :userId="userId" />
+          <component :is="item.component" :userId="userId" :isInBed="isInBed" />
         </div>
       </div>
     </div>
@@ -52,7 +52,7 @@ import HeartbeatMonitor from '@/components/HeartbeatMonitor.vue'
 import HeartrateMonitor from '@/components/HeartrateMonitor.vue'
 import BreathMonitor from '@/components/BreathMonitor.vue'
 import HRVMonitor from '@/components/HRVMonitor.vue'
-import { getBWaveform } from '@/api/breath'
+import { getWaveform } from '@/api/heart'
 
 const userId = ref<string | null>(null)
 const currentDate = ref('')
@@ -109,7 +109,7 @@ const handleOrientationChange = () => {
 const checkBedStatus = async () => {
   try {
     if (userId.value) {
-      const res = await getBWaveform(userId.value)
+      const res = await getWaveform(userId.value)
       if (res && res.data) {
         isInBed.value = res.data.is_in_bed
       }

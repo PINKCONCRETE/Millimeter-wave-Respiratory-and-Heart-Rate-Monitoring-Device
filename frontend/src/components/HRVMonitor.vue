@@ -62,9 +62,15 @@ import { generateMockData } from '@/utils/mocks/HRVMock'
 // 使用本地时区格式化时间
 import { formatTimestampToLocalDateTime } from '@/utils/timestamp'
 
+// Props 定义
+const props = defineProps<{
+  userId?: string
+  isInBed: boolean
+}>()
+
 // 路由信息
 const route = useRoute()
-const userId = computed(() => route.params.userId as string)
+const userId = computed(() => props.userId || route.params.userId as string)
 
 // 状态定义
 const isExpanded = ref(true)
@@ -74,7 +80,6 @@ const chartRef = ref<HTMLElement | null>(null)
 const intervalId = ref<number | null>(null)
 const chartData = ref<(number | null)[]>([])
 const timeStamps = ref<number[]>([])
-const isInBed = ref<boolean | null>(null)
 
 let chart: ECharts | null = null
 let resizeObserver: ResizeObserver | null = null
@@ -95,7 +100,7 @@ const useMockData = () => {
   
   chartData.value = mockData
   timeStamps.value = mockTimestamps
-  isInBed.value = true // 模拟在床状态
+  // 模拟在床状态已由父组件 props 提供
   
   // 设置当前HRV值
   const lastValidValue = [...mockData].reverse().find(v => v !== null)
@@ -124,7 +129,6 @@ const updateChart = async () => {
     if (res?.code === 20000 && res.data) {
       chartData.value = res.data.hrv_data.map((v: number) => v === -1 ? null : v)
       timeStamps.value = res.data.time_stamp
-      isInBed.value = res.data.is_in_bed
 
       // HRV值显示
       const lastValidValue = [...chartData.value].reverse().find(v => v !== null)
@@ -205,7 +209,7 @@ const getChartOption = (displayData: (number | null)[], xAxisData: string[]) => 
         }
       },
     },
-    series: !isInBed.value ? [] : [{
+    series: props.isInBed ? [{
       name: 'HRV',
       type: 'line',
       data: displayData,
@@ -235,7 +239,7 @@ const getChartOption = (displayData: (number | null)[], xAxisData: string[]) => 
       itemStyle: {
         color: '#8B5CF6'
       }
-    }]
+    }] : []
   }
 }
 

@@ -33,9 +33,15 @@ import { convertTimestampToTimeHM } from '@/utils/timestamp'
 import { calculateEchartsFontSize, calculateEchartsLineWidth } from '@/utils/echarts'
 import { generateHeartRateMockData } from '@/utils/mocks/HeartrateMock'
 
+// Props 定义
+const props = defineProps<{
+  userId?: string
+  isInBed: boolean
+}>()
+
 // 路由信息
 const route = useRoute()
-const userId = computed(() => route.params.userId as string)
+const userId = computed(() => props.userId || route.params.userId as string)
 
 // 状态定义
 const isExpanded = ref(true)
@@ -45,7 +51,6 @@ const chartRef = ref<HTMLElement | null>(null)
 const chartData = ref<number[]>([])
 const timeStamps = ref<number[]>([])
 const intervalId = ref<number | null>(null)
-const isInBed = ref<boolean | null>(null)
 // 折叠按钮切换
 const toggle = () => {
   isExpanded.value = !isExpanded.value
@@ -80,15 +85,14 @@ const updateChart = async () => {
 
     const heartWaveformTmp = res.data.heart_waveform
     const timeStampTmp = res.data.time_stamp
-    isInBed.value = res.data.is_in_bed
     
-    // 如果离床，清空图表数据
-    if (!isInBed.value) {
+    // 如果离床，清空图表数据并更新图表
+    if (!props.isInBed) {
       chartData.value = []
       timeStamps.value = []
-      chartData.value = []
       heartRate.value = -1
       if (chart) {
+        chart.clear()
         chart.setOption(getChartOption([], []))
       }
       return
@@ -99,10 +103,13 @@ const updateChart = async () => {
       chartData.value = heartWaveformTmp
       timeStamps.value = timeStampTmp
       heartRate.value = heartWaveformTmp[heartWaveformTmp.length - 1]
-      chart?.setOption(getChartOption(
-        chartData.value.map(rate => rate === -1 || rate === -2 ? null : rate),
-        timeStamps.value.map(point => convertTimestampToTimeHM(point))
-      ))
+      if (chart) {
+        chart.clear()
+        chart.setOption(getChartOption(
+          chartData.value.map(rate => rate === -1 || rate === -2 ? null : rate),
+          timeStamps.value.map(point => convertTimestampToTimeHM(point))
+        ))
+      }
       return
     }
 
@@ -117,6 +124,7 @@ const updateChart = async () => {
       heartRate.value = latestHeartRate
       
       if (chart) {
+        chart.clear()
         chart.setOption(getChartOption(
           chartData.value.map(rate => rate === -1 || rate === -2 ? null : rate),
           timeStamps.value.map(point => convertTimestampToTimeHM(point))
@@ -192,7 +200,7 @@ const getChartOption = (displayData: (number | null)[], xAxisData: string[]) => 
         }
       },
     },
-    series: [
+    series: props.isInBed ? [
       {
         name: 'Heart Rate',
         type: 'line',
@@ -224,7 +232,7 @@ const getChartOption = (displayData: (number | null)[], xAxisData: string[]) => 
           color: 'rgb(255, 105, 180)'
         }
       }
-    ]
+    ] : []
   }
 }
 
