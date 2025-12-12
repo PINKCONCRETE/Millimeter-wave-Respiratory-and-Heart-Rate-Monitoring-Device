@@ -64,7 +64,7 @@ class HumanCheckByWave(HumanCheckBase):
     """
 
     BINS_PER_CHANNEL = 10  # 每个通道的频率bin数量
-    NEAR_PEAK_RANGE = 4 #近距离处会有一个伪峰
+    NEAR_PEAK_RANGE = 5 #近距离处会有一个伪峰
 
     def __init__(
         self,
@@ -81,7 +81,7 @@ class HumanCheckByWave(HumanCheckBase):
 
         """
         super().__init__()
-        self._base_energies = [0.0] * self.BINS_PER_CHANNEL
+        self._base_energies = [3001.] * self.BINS_PER_CHANNEL
         self._accumulated_count = 0
         self._exception_count = 0
 
@@ -91,7 +91,7 @@ class HumanCheckByWave(HumanCheckBase):
 
     def reset(self) -> None:
         """重置检测状态."""
-        self._base_energies = [0.0] * self.BINS_PER_CHANNEL
+        self._base_energies = [3001.] * self.BINS_PER_CHANNEL
         self._accumulated_count = 0
         self._exception_count = 0
 
@@ -265,10 +265,18 @@ class HumanCheck:
 
     def __init__(self) -> None:
         """初始化综合检测器."""
+
+        #该通道只在短时间内检测非常小的阈值，用以快速发现人离开的情况
+        self.check_by_verysmallwave = HumanCheckByWave(
+            accumulate_frame_count=100,
+            tollerence_frame_count=5,
+            tollerence=0.005,
+        )
+
         # 关注是否有大量微动
         self.check_by_smallwave = HumanCheckByWave(
             accumulate_frame_count=200,
-            tollerence_frame_count=20,
+            tollerence_frame_count=30,
             tollerence=0.02,
         )
         # 关注是否有少量大动
@@ -295,9 +303,16 @@ class HumanCheck:
             是否检测到人体
 
         """
+        self.check_by_verysmallwave.do_human_check(energies, offset)
         self.check_by_smallwave.do_human_check(energies, offset)
         self.check_by_bigwave.do_human_check(energies, offset)
         self.check_by_peak.do_human_check(energies, offset)
+
+        #如果短时间内非常静止，则立刻认定人已离开
+        # if not self.check_by_smallwave.has_human():
+        #     self._has_human = False
+        #     print("very small")
+        #     return False
 
         res_list = [
             self.check_by_smallwave.has_human(),
@@ -305,7 +320,7 @@ class HumanCheck:
             self.check_by_peak.has_human(),
         ]
         
-        print(res_list)
+        # print(res_list)
         # 三种检测方法中有两种或以上判断有人，则认为有人
         if sum(res_list) > 1:
         # if res_list[1]:
