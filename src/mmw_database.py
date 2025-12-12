@@ -13,7 +13,7 @@ backend_path = Path(__file__).parent.parent / "backend"
 sys.path.insert(0, str(backend_path))
 
 from flask import Flask
-from backend.models import db, UserWaveform, HeartData, HRVData
+from backend.models import db, UserWaveform, HeartData, HRVData, BreathData
 
 
 class KalmanFilter:
@@ -77,6 +77,7 @@ class UnifiedDatabaseWriter(threading.Thread):
         self._last_ring_frame = 0
         self._wave_writes = 0
         self._ring_writes = 0
+        self._breath_data_writes = 0  # 呼吸数据表写入次数
         
         # 心率相关
         self._heart_waveform_buffer = []  # 缓冲200个心率值
@@ -205,6 +206,8 @@ class UnifiedDatabaseWriter(threading.Thread):
         displacement = data.get('displacement')
         flow_rate = data.get('flow_rate')
         frame_idx = data.get('frame_idx', 0)
+        warning_id = data.get('warning_id', 0)
+        respiratory_rate = data.get('respiratory_rate', 0.0)
         
         # 更新内存中的数据 - 添加None检查
         if rr_wave is not None and len(rr_wave) > 0:
@@ -242,9 +245,25 @@ class UnifiedDatabaseWriter(threading.Thread):
                 self._last_ring_frame = frame_idx
                 print(f"✓ [呼吸环] 帧{frame_idx} | 写入: {self._ring_writes}")
         
+        # 每1000帧写入BreathData表（包含警告信息）
+        if frame_idx >= 1000 and frame_idx % 1000 == 0:
+            timestamp = datetime.now()
+            breath_data = BreathData(
+                uid=self._uid,
+                timestamp=timestamp,
+                respiratory_rate=float(respiratory_rate) if respiratory_rate > 0 else None,
+                is_in_bed=self._human_status,
+                warning_id=warning_id  # 0:正常, 21:呼吸暂停, 22:COPD
+            )
+            db.session.add(breath_data)
+            db.session.commit()
+            self._breath_data_writes += 1
+            warning_str = {0: '正常', 21: '呼吸暂停', 22: 'COPD'}.get(warning_id, '未知')
+            print(f"✓ [呼吸数据] 帧{frame_idx} | 状态:{warning_str} | 呼吸率:{respiratory_rate:.1f}bpm | 写入:{self._breath_data_writes}")
+        
         # 调试
         if self._breath_count % 1000 == 0:
-            print(f"[呼吸] 接收{self._breath_count}次 | 帧{frame_idx} | 波形:{self._wave_writes} | 环:{self._ring_writes}")
+            print(f"[呼吸] 接收{self._breath_count}次 | 帧{frame_idx} | 波形:{self._wave_writes} | 环:{self._ring_writes} | 数据:{self._breath_data_writes}")
     
     def _handle_heart_rate(self, data: dict):
         """处理心率数据 - 使用卡尔曼滤波后取整再写入，同时处理HRV数据."""
@@ -366,7 +385,7 @@ class UnifiedDatabaseWriter(threading.Thread):
                 waveform.updated_at = datetime.now()
                 db.session.commit()
         
-        print(f"✓ [数据库] 停止 | SCG:{self._scg_writes} | 呼吸波形:{self._wave_writes} | 呼吸环:{self._ring_writes} | 心率:{self._heart_writes} | 人体检测:{self._human_check_count}")
+        print(f"✓ [数据库] 停止 | SCG:{self._scg_writes} | 呼吸波形:{self._wave_writes} | 呼吸环:{self._ring_writes} | 呼吸数据:{self._breath_data_writes} | 心率:{self._heart_writes} | 人体检测:{self._human_check_count}")
     
     def get_statistics(self):
         """获取统计."""
@@ -376,6 +395,7 @@ class UnifiedDatabaseWriter(threading.Thread):
             "breath_count": self._breath_count,
             "wave_writes": self._wave_writes,
             "ring_writes": self._ring_writes,
+            "breath_data_writes": self._breath_data_writes,
             "heart_count": self._heart_count,
             "heart_writes": self._heart_writes,
             "human_check_count": self._human_check_count,

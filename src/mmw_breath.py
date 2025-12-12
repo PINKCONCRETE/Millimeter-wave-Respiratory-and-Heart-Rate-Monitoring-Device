@@ -166,13 +166,18 @@ class MMWBreathThread(threading.Thread):
         # 4. 提取呼吸周期（位移-流速）
         displacement, flow_rate = self._get_breath_cycle(phase_info)
 
-        # 5. 构造输出结果
+        # 5. 检测呼吸暂停和COPD
+        warning_id, respiratory_rate = self._detect_breath_anomalies(phase_info)
+
+        # 6. 构造输出结果
         breath_dict = {
             "rr_wave": phase_info,
             "displacement": displacement,
             "flow_rate": flow_rate,
             "target_bin": target_bin,
             "frame_idx": self._completed_frames,
+            "warning_id": warning_id,  # 0:正常, 21:呼吸暂停, 22:COPD
+            "respiratory_rate": respiratory_rate,  # 呼吸率(bpm)
         }
 
         # 输出到队列
@@ -359,6 +364,117 @@ class MMWBreathThread(threading.Thread):
         peaks, _ = signal.find_peaks(data, distance=min_distance)
 
         return peaks, valleys
+
+    def _detect_breath_anomalies(self, phase_info: np.ndarray) -> tuple[int, float]:
+        """检测呼吸异常（呼吸暂停和COPD）.
+
+        Args:
+            phase_info: 处理后的相位信息
+
+        Returns:
+            (warning_id, respiratory_rate) 元组
+            warning_id: 0=正常, 21=呼吸暂停, 22=COPD
+            respiratory_rate: 呼吸率(bpm)
+
+        """
+        # 1. 检测呼吸暂停：能量过低或幅度过小
+        energy_thresh = 0.5
+        range_value_thresh = 0.15
+        phase_energy = np.sum(np.square(phase_info)) / len(phase_info) if len(phase_info) > 0 else 0
+        max_amplitude = np.max(np.abs(phase_info))
+
+        if phase_energy < energy_thresh or max_amplitude < range_value_thresh:
+            return 21, 0.0  # 呼吸暂停
+
+        # 2. 计算呼吸参数用于COPD检测
+        peaks, valleys = self._find_peaks_valleys(phase_info)
+
+        # 至少需要2个完整周期才能计算参数
+        if len(peaks) < 2:
+            return 0, 0.0  # 数据不足，返回正常
+
+        # 对齐峰值和谷值
+        if peaks[0] > valleys[0]:
+            peaks = peaks[1:]
+
+        if len(peaks) < 2:
+            return 0, 0.0
+
+        # 计算呼吸率和COPD相关参数
+        ti_te_list = []
+        duty_cycle_list = []
+        t_ptef_te_list = []
+        ie_50_list = []
+        rr_list = []
+
+        for i in range(len(peaks) - 1):
+            single_cycle = -phase_info[peaks[i]:peaks[i+1]]  # 翻转信号
+            cycle_length = len(single_cycle)
+            if cycle_length == 0:
+                continue
+
+            t_tot = cycle_length / self.SAMPLING_RATE
+            peak_idx = np.argmax(single_cycle)
+            t_i = peak_idx / self.SAMPLING_RATE
+            t_e = t_tot - t_i
+
+            if t_e == 0 or t_tot == 0:
+                continue
+
+            ti_te = t_i / t_e
+            duty_cycle = t_i / t_tot
+            rr = 60 / t_tot
+
+            rr_list.append(rr)
+            ti_te_list.append(ti_te)
+            duty_cycle_list.append(duty_cycle)
+
+            # 计算流速相关参数
+            derivative = np.gradient(single_cycle)
+            t_PTEF = np.argmin(derivative) / self.SAMPLING_RATE - t_tot / 2
+            t_ptef_te = t_PTEF / t_e if t_e != 0 else 0
+            t_ptef_te_list.append(t_ptef_te)
+
+            # 计算IE50
+            mid_inhale = (single_cycle[0] + single_cycle[peak_idx]) / 2
+            mid_exhale = (single_cycle[peak_idx] + single_cycle[-1]) / 2
+            try:
+                TIF_50_idx = np.where(single_cycle[:peak_idx] >= mid_inhale)[0][0]
+                TEF_50_idx = np.where(single_cycle[peak_idx:] <= mid_exhale)[0][0] + peak_idx
+                tif_50 = abs(derivative[TIF_50_idx])
+                tef_50 = abs(derivative[TEF_50_idx])
+                ie_50 = tif_50 / tef_50 if tef_50 != 0 else 0
+                ie_50_list.append(ie_50)
+            except (IndexError, ValueError):
+                continue
+
+        # 计算中位数
+        if not ti_te_list:
+            return 0, 0.0
+
+        median_ti_te = np.median(ti_te_list)
+        median_duty_cycle = np.median(duty_cycle_list)
+        median_t_ptef_te = np.median(t_ptef_te_list) if t_ptef_te_list else 0
+        median_ie_50 = np.median(ie_50_list) if ie_50_list else 0
+        median_rr = np.median(rr_list)
+
+        # 3. COPD判断：至少2个参数异常
+        ti_te_flag = 0.4 <= median_ti_te <= 1.2
+        duty_cycle_flag = 0.35 <= median_duty_cycle <= 0.55
+        t_ptef_te_flag = 0.241 <= median_t_ptef_te <= 0.583
+        ie_50_flag = 0.9 <= median_ie_50 <= 1.88
+
+        abnormal_count = sum([
+            not ti_te_flag,
+            not duty_cycle_flag,
+            not t_ptef_te_flag,
+            not ie_50_flag
+        ])
+
+        if abnormal_count >= 2:
+            return 22, median_rr  # COPD
+
+        return 0, median_rr  # 正常
 
     def stop(self) -> None:
         """停止处理线程."""
