@@ -48,7 +48,7 @@ const isExpanded = ref(true)
 const tooltip = ref('每秒心脏跳动的次数， 60-100为正常')
 const heartRate = ref(1)
 const chartRef = ref<HTMLElement | null>(null)
-const chartData = ref<number[]>([])
+const chartData = ref<(number | null)[]>([])
 const timeStamps = ref<number[]>([])
 const intervalId = ref<number | null>(null)
 // 折叠按钮切换
@@ -74,18 +74,16 @@ const heartRateText = computed(() => {
   return '未检测到心跳'
 })
 
-// 更新图表数据
+// 更新图表数据，只显示当前时间到前10000秒区间
 const updateChart = async () => {
   try {
     const res = await getHrWaveform(userId.value)
-
-    // const res = generateHeartRateMockData() // 使用模拟数据函数代替实际API调用
-
     if (!res?.data) return
 
     const heartWaveformTmp = res.data.heart_waveform
     const timeStampTmp = res.data.time_stamp
-    
+    console.log('Fetched heart waveform data:', heartWaveformTmp)
+    console.log('Fetched time stamp data:', timeStampTmp)
     // 如果离床，清空图表数据并更新图表
     if (!props.isInBed) {
       chartData.value = []
@@ -98,38 +96,50 @@ const updateChart = async () => {
       return
     }
 
-    // 如果刚回到床上，重新初始化数据
-    if (chartData.value.length === 0) {
-      chartData.value = heartWaveformTmp
-      timeStamps.value = timeStampTmp
-      heartRate.value = heartWaveformTmp[heartWaveformTmp.length - 1]
-      if (chart) {
-        chart.clear()
-        chart.setOption(getChartOption(
-          chartData.value.map(rate => rate === -1 || rate === -2 ? null : rate),
-          timeStamps.value.map(point => convertTimestampToTimeHM(point))
-        ))
+    // 1. 计算时间区间
+    const now = Math.floor(Date.now() / 1000)
+    const startTime = now - 10000
+    const endTime = now
+    // 只保留在区间内的点，并四舍五入到秒
+    const filtered: { t: number, v: number }[] = []
+    for (let i = 0; i < timeStampTmp.length; i++) {
+      const t = Math.round(timeStampTmp[i])
+      if (t >= startTime && t <= endTime) {
+        filtered.push({ t, v: heartWaveformTmp[i] })
       }
-      return
+    }
+    // 横轴为实际采样点时间，纵轴为实际心率
+    const xAxisData: (string|null)[] = []
+    const displayData: (number|null)[] = []
+    for (let i = 0; i < filtered.length; i++) {
+      const cur = filtered[i]
+      const prev = filtered[i - 1]
+      // 判断与前一个点的时间间隔
+      if (i > 0 && cur.t - prev.t > 7.5) {
+        // 插入null断线
+        xAxisData.push(null)
+        displayData.push(null)
+      }
+      xAxisData.push(convertTimestampToTimeHM(cur.t))
+      displayData.push((cur.v === -1 || cur.v === -2) ? null : cur.v)
     }
 
-    const latestHeartRate = heartWaveformTmp[heartWaveformTmp.length - 1]
-    const latestTimestamp = timeStampTmp[timeStampTmp.length - 1]
-    
-    if (latestTimestamp > timeStamps.value[timeStamps.value.length - 1]) {
-      chartData.value.shift()
-      timeStamps.value.shift()
-      chartData.value.push(latestHeartRate)
-      timeStamps.value.push(latestTimestamp)
-      heartRate.value = latestHeartRate
-      
-      if (chart) {
-        chart.clear()
-        chart.setOption(getChartOption(
-          chartData.value.map(rate => rate === -1 || rate === -2 ? null : rate),
-          timeStamps.value.map(point => convertTimestampToTimeHM(point))
-        ))
+    // 4. 计算最新心率
+    let lastValid = null
+    for (let i = displayData.length - 1; i >= 0; i--) {
+      if (displayData[i] !== null) {
+        lastValid = displayData[i]
+        break
       }
+    }
+    heartRate.value = lastValid !== null ? lastValid : -1
+
+    chartData.value = displayData
+    timeStamps.value = filtered.map(item => item.t)
+
+    if (chart) {
+      chart.clear()
+      chart.setOption(getChartOption(displayData, xAxisData))
     }
   } catch (error) {
     console.error('Error fetching latest heart rate data:', error)
@@ -206,6 +216,8 @@ const getChartOption = (displayData: (number | null)[], xAxisData: string[]) => 
         type: 'line',
         showSymbol: false,
         data: displayData,
+        connectNulls: false,
+        animation: false,
         animationDuration: 5000,
         animationEasing: 'linear',
         lineStyle: {
