@@ -76,6 +76,7 @@ class MMWProcessorThread(threading.Thread):
         self._last_completed_frames = 0  # 上次统计的完整帧数
         self._generated_scg_points = 0  # 生成的SCG数据点数
         self._current_max_bin = 0  # 当前能量最大的bin编号
+        self._current_offset = 0  # 当前的offset值
         self._running = True
         self._start_time = None
 
@@ -116,6 +117,10 @@ class MMWProcessorThread(threading.Thread):
         
         # 帧同步：通道 0 表示新一轮开始
         if channel_id == 0:
+            # 更新 offset
+            if "offset" in frame_data:
+                self._current_offset = frame_data["offset"]
+                
             # 首次接收数据提示
             if self._completed_frames == 0 and np.any(data != 0):
                 print("接收到第一帧真实数据，通道 0")
@@ -229,6 +234,7 @@ class MMWProcessorThread(threading.Thread):
         # 只计算通道0的每个频率bin的总能量
         energies = [np.sum(np.abs(fft_data[:, 0, i])) for i in range(self._bins_per_channel)]
         max_bin_idx = int(np.argmax(energies))
+        # print(max_bin_idx)
         self._current_max_bin = max_bin_idx  # 保存当前最大能量bin编号
         return max_bin_idx
 

@@ -19,46 +19,92 @@ from src.mmw_processor import MMWProcessorThread  # noqa: E402
 from src.mmw_rader import MMWRadarThread  # noqa: E402
 
 
-class SCGVisualizer:
-    """毫米波SCG数据实时可视化器.
+class MultiBinSCGVisualizer:
+    """多Bin毫米波SCG数据实时可视化器.
 
-    使用matplotlib动画实时显示SCG波形，支持滑动窗口显示。
+    使用两个Figure（每个包含5个子图）显示所有10个Bin的SCG波形。
 
     Attributes:
         window_size: 滑动窗口大小（数据点数）
-        scg_data: SCG数据缓冲区
+        scg_data: SCG数据缓冲区列表 (10个deque)
         time_data: 时间戳缓冲区
-
     """
 
-    def __init__(self, window_size: int = 1000) -> None:
+    def __init__(self, window_size: int = 1000, bins_num: int = 10) -> None:
         """初始化可视化器.
 
         Args:
             window_size: 滑动窗口大小（默认1000个数据点）
-
+            bins_num: Bin的数量
         """
         self.window_size = window_size
-        self.scg_data = deque(maxlen=window_size)
+        self.bins_num = bins_num
+        self.scg_data = [deque(maxlen=window_size) for _ in range(bins_num)]
         self.time_data = deque(maxlen=window_size)
 
-        # 创建图形
-        self.fig, self.ax = plt.subplots(figsize=(12, 6))
-        self.line, = self.ax.plot([], [], "b-", linewidth=1)
+        # 创建2个图形，每个5个子图
+        self.figs = []
+        self.axes_list = []
+        
+        # Figure 1: Bins 0-4
+        fig1, axes1 = plt.subplots(5, 1, figsize=(10, 10), sharex=True)
+        fig1.canvas.manager.set_window_title("SCG Bins 0-4")
+        self.figs.append(fig1)
+        if isinstance(axes1, np.ndarray):
+            self.axes_list.extend(axes1.flatten())
+        else:
+            self.axes_list.append(axes1)
 
-        # 设置图形属性
-        self.ax.set_xlabel("时间 (秒)", fontsize=12)
-        self.ax.set_ylabel("SCG值", fontsize=12)
-        self.ax.set_title("实时SCG波形 (滑动窗口)", fontsize=14, fontweight="bold")
-        self.ax.grid(True, alpha=0.3)
+        # Figure 2: Bins 5-9
+        fig2, axes2 = plt.subplots(5, 1, figsize=(10, 10), sharex=True)
+        fig2.canvas.manager.set_window_title("SCG Bins 5-9")
+        self.figs.append(fig2)
+        if isinstance(axes2, np.ndarray):
+            self.axes_list.extend(axes2.flatten())
+        else:
+            self.axes_list.append(axes2)
 
-        # 状态信息文本
-        self.status_text = self.ax.text(
-            0.02, 0.98, "",
-            transform=self.ax.transAxes,
+        # 初始化所有子图的线条
+        self.lines = []
+        colors = plt.cm.jet(np.linspace(0, 1, bins_num))
+        
+        for i in range(bins_num):
+            if i >= len(self.axes_list):
+                break
+                
+            ax = self.axes_list[i]
+            line, = ax.plot([], [], color=colors[i], linewidth=1)
+            self.lines.append(line)
+            
+            ax.grid(True, alpha=0.3)
+            ax.set_ylabel(f"Bin {i}", fontsize=10)
+            
+            # 设置标题
+            if i == 0:
+                ax.set_title("SCG Waveforms (Bins 0-4)", fontsize=12, fontweight="bold")
+            elif i == 5:
+                ax.set_title("SCG Waveforms (Bins 5-9)", fontsize=12, fontweight="bold")
+
+        # 设置共同的X轴标签
+        self.axes_list[4].set_xlabel("时间 (秒)", fontsize=10)
+        self.axes_list[9].set_xlabel("时间 (秒)", fontsize=10)
+
+        # 状态信息文本 (图1)
+        self.status_text = self.axes_list[0].text(
+            0.02, 0.95, "",
+            transform=self.axes_list[0].transAxes,
             verticalalignment="top",
             bbox={"boxstyle": "round", "facecolor": "wheat", "alpha": 0.5},
-            fontsize=10,
+            fontsize=9,
+        )
+
+        # 状态信息文本 (图2)
+        self.status_text2 = self.axes_list[5].text(
+            0.02, 0.95, "",
+            transform=self.axes_list[5].transAxes,
+            verticalalignment="top",
+            bbox={"boxstyle": "round", "facecolor": "wheat", "alpha": 0.5},
+            fontsize=9,
         )
 
         # 统计信息
@@ -66,95 +112,160 @@ class SCGVisualizer:
         self.start_time = time.time()
         self.data_start_timestamp = 0.0
         self.data_end_timestamp = 0.0
+        self.offset = 0
+        self.max_bin = 0
+        self.default_colors = colors
 
-    def update_data(self, scg_value: float, timestamp: float) -> None:
-        """更新数据缓冲区.
-
-        Args:
-            scg_value: SCG值
-            timestamp: 时间戳
-
-        """
+    def update_data(self, scg_values: list[float], timestamp: float, offset: int = 0, max_bin: int = 0) -> None:
+        """更新数据缓冲区."""
         if self.data_point_count == 0:
             self.data_start_timestamp = timestamp
         
         self.data_end_timestamp = timestamp
-        self.scg_data.append(scg_value)
+        self.offset = offset
+        self.max_bin = max_bin
+        
+        for i, val in enumerate(scg_values):
+            if i < len(self.scg_data):
+                self.scg_data[i].append(val)
+                
         self.time_data.append(timestamp)
         self.data_point_count += 1
 
-    def update_plot(self, frame: int) -> tuple:
-        """更新图形（由FuncAnimation调用）.
+    def _update_fig(self, frame: int, start_idx: int, end_idx: int, status_text=None) -> tuple:
+        """通用更新函数."""
+        if len(self.time_data) == 0:
+            artists = [self.lines[i] for i in range(start_idx, end_idx)]
+            if status_text:
+                artists.append(status_text)
+            return tuple(artists)
 
-        Args:
-            frame: 帧编号（由FuncAnimation自动传入）
-
-        Returns:
-            更新的艺术家对象元组
-
-        """
-        if len(self.scg_data) > 0:
-            # 更新线条数据
-            time_array = np.array(self.time_data)
-            scg_array = np.array(self.scg_data)
-            self.line.set_data(time_array, scg_array)
-
-            # 动态调整坐标轴
-            if len(time_array) > 1:
-                # x轴显示时间（秒）
-                x_min = time_array[0]
-                x_max = time_array[-1]
-                self.ax.set_xlim(x_min, x_max)
+        time_array = np.array(self.time_data)
+        x_min = time_array[0]
+        x_max = time_array[-1]
+        
+        artists = []
+        
+        # 更新该范围内的所有子图
+        for i in range(start_idx, end_idx):
+            if i >= len(self.lines):
+                break
                 
-                # 设置x轴标签格式
-                if x_max - x_min > 60:
-                    # 如果超过1分钟，显示分钟:秒
-                    self.ax.set_xlabel(
-                        f"时间 (秒) [{x_min:.1f}s - {x_max:.1f}s]", fontsize=12
-                    )
-                else:
-                    self.ax.set_xlabel("时间 (秒)", fontsize=12)
-
-                # y轴自适应，留10%余量
+            line = self.lines[i]
+            ax = self.axes_list[i]
+            
+            # 高亮最大能量Bin
+            if i == self.max_bin:
+                line.set_color('red')
+                line.set_linewidth(2)
+            else:
+                line.set_color(self.default_colors[i])
+                line.set_linewidth(1)
+            
+            if len(self.scg_data[i]) > 0:
+                scg_array = np.array(self.scg_data[i])
+                line.set_data(time_array, scg_array)
+                
+                # Y轴自适应
                 y_min, y_max = scg_array.min(), scg_array.max()
                 y_range = y_max - y_min
                 if y_range > 0:
                     margin = 0.1 * y_range
-                    self.ax.set_ylim(y_min - margin, y_max + margin)
+                    ax.set_ylim(y_min - margin, y_max + margin)
                 else:
-                    self.ax.set_ylim(-100, 100)
+                    ax.set_ylim(-100, 100)
+            
+            # X轴随时间滚动
+            ax.set_xlim(x_min, x_max)
+            artists.append(line)
 
-            # 更新状态信息
+        # 更新状态文本
+        if status_text:
             elapsed = time.time() - self.start_time
             data_duration = self.data_end_timestamp - self.data_start_timestamp
-
+            
             status_str = (
-                f"数据点: {len(self.scg_data)}/{self.window_size}\n"
-                f"总数据点: {self.data_point_count}\n"
-                f"数据时长: {data_duration:.1f}s\n"
-                f"运行时间: {elapsed:.1f}s"
+                f"Points: {len(self.time_data)}\n"
+                f"Duration: {data_duration:.1f}s\n"
+                f"Offset: {self.offset}\n"
+                f"Max Bin: {self.max_bin}"
             )
-            self.status_text.set_text(status_str)
+            status_text.set_text(status_str)
+            artists.append(status_text)
+            
+        return tuple(artists)
 
-        return self.line, self.status_text
+    def update_plot_fig1(self, frame: int) -> tuple:
+        """更新图1 (Bins 0-4)."""
+        return self._update_fig(frame, 0, 5, self.status_text)
 
-    def start_animation(self, interval: int = 50) -> FuncAnimation:
-        """启动动画.
+    def update_plot_fig2(self, frame: int) -> tuple:
+        """更新图2 (Bins 5-9)."""
+        return self._update_fig(frame, 5, 10, self.status_text2)
 
-        Args:
-            interval: 更新间隔（毫秒，默认50ms）
-
-        Returns:
-            FuncAnimation对象
-
-        """
-        return FuncAnimation(
-            self.fig,
-            self.update_plot,
+    def start_animations(self, interval: int = 50) -> list[FuncAnimation]:
+        """启动两个动画."""
+        anim1 = FuncAnimation(
+            self.figs[0],
+            self.update_plot_fig1,
             interval=interval,
             blit=True,
             cache_frame_data=False,
         )
+        anim2 = FuncAnimation(
+            self.figs[1],
+            self.update_plot_fig2,
+            interval=interval,
+            blit=True,
+            cache_frame_data=False,
+        )
+        return [anim1, anim2]
+
+
+class MultiBinProcessorThread(MMWProcessorThread):
+    """多Bin处理线程，输出所有10个Bin的SCG数据."""
+    
+    def _generate_new_scg_point(self) -> None:
+        """重写生成函数，输出所有Bin的数据."""
+        if self._generated_scg_points == 0:
+            print(f"缓冲区已满（{len(self._frame_buffer)}帧），开始多Bin输出模式...")
+
+        if len(self._frame_buffer) < self.MIN_BUFFER_SIZE:
+            return
+
+        # 转换为numpy数组
+        fft_data = np.array(self._frame_buffer)
+        
+        # 计算能量最大的Bin
+        max_bin_idx = self._find_max_energy_bin(fft_data)
+        
+        scg_values = []
+        
+        # 遍历所有Bin
+        for bin_idx in range(self._bins_per_channel):
+            # 提取相位
+            phase_data = self._extract_phase(fft_data, bin_idx)
+            # 计算导数
+            scg_waveform = self._compute_derivative_waveform(phase_data)
+            # 过滤异常值
+            outlier_idx = np.abs(scg_waveform) > self.OUTLIER_THRESHOLD
+            scg_waveform[outlier_idx] = 0.0
+            
+            # 取最新的值（倒数第4个，因为7点差分）
+            latest_value = scg_waveform[-4]
+            scg_values.append(float(latest_value))
+            
+        # 输出结果
+        result = {
+            "frame_idx": self._generated_scg_points,
+            "scg_values": scg_values,
+            "timestamp": self._generated_scg_points * self.TIME_STEP,
+            "offset": self._current_offset,
+            "max_bin": max_bin_idx
+        }
+        self._output_queue.put(result)
+        
+        self._generated_scg_points += 1
 
 
 def main() -> None:
@@ -181,7 +292,7 @@ def main() -> None:
     output_queue = Queue()
 
     # 创建可视化器
-    visualizer = SCGVisualizer(window_size=window_size)
+    visualizer = MultiBinSCGVisualizer(window_size=window_size, bins_num=bins_per_channel)
 
     # 数据回调函数（从输出队列读取）
     def update_from_queue() -> None:
@@ -190,20 +301,22 @@ def main() -> None:
         while not output_queue.empty() and count < 50:  # 每次最多处理50个点
             try:
                 result = output_queue.get_nowait()
-                scg_value = result["scg_value"]
+                scg_values = result["scg_values"]
                 timestamp = result["timestamp"]
-                visualizer.update_data(scg_value, timestamp)
+                offset = result.get("offset", 0)
+                max_bin = result.get("max_bin", 0)
+                visualizer.update_data(scg_values, timestamp, offset, max_bin)
                 count += 1
             except Exception:
                 break
 
-    # 修改update_plot以从队列读取
-    original_update = visualizer.update_plot
-    def wrapped_update(frame: int) -> tuple:
+    # 修改 update_plot_fig1 以从队列读取数据
+    original_update_fig1 = visualizer.update_plot_fig1
+    def wrapped_update_fig1(frame: int) -> tuple:
         update_from_queue()
-        return original_update(frame)
+        return original_update_fig1(frame)
     
-    visualizer.update_plot = wrapped_update
+    visualizer.update_plot_fig1 = wrapped_update_fig1
 
     # 创建雷达线程
     print("\n初始化雷达线程...")
@@ -217,7 +330,7 @@ def main() -> None:
 
     # 创建处理线程
     print("初始化处理线程...")
-    processor_thread = MMWProcessorThread(
+    processor_thread = MultiBinProcessorThread(
         input_queue=data_queue,
         output_queue=output_queue,
         channel_num=channel_num,
@@ -234,7 +347,7 @@ def main() -> None:
     print("关闭窗口以停止程序\n")
 
     # 启动动画
-    _ = visualizer.start_animation(interval=50)
+    animations = visualizer.start_animations(interval=50)
 
     try:
         plt.show()
@@ -253,7 +366,7 @@ def main() -> None:
         print("\n最终统计:")
         print(f"  接收完整帧数: {stats['completed_frames']}")
         print(f"  生成SCG点数: {stats['generated_scg_points']}")
-        print(f"  可视化数据点: {len(visualizer.scg_data)}")
+        print(f"  可视化数据点: {len(visualizer.time_data)}")
         print("=" * 60)
 
 

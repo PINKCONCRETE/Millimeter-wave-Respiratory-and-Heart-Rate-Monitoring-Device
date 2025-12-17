@@ -81,7 +81,7 @@ class MMWRadarThread(threading.Thread):
         self._received_bytes = 0  # 接收的字节数
         self._last_received_bytes = 0  # 上次统计的字节数
         self._start_time = None
-    
+
         # 线程控制
         self._running = False
 
@@ -156,6 +156,7 @@ class MMWRadarThread(threading.Thread):
     def _handle_offset(self, byte_data: int) -> None:
         """处理 offset 字节（仅当 channel_id=0 时）"""
         self._temp_offset = byte_data
+        # print(f"[雷达] 接收到 channel_id=0 的 offset: {self._temp_offset}")
         # 初始化 DATA 阶段，i = 0
         self._complex_count = 0
         self._temp_complexes = []
@@ -218,6 +219,7 @@ class MMWRadarThread(threading.Thread):
         self._output_queue.put({
             "channel_id": self._temp_channel_id,
             "bins_count": self._temp_bins_count,
+            "offset": self._temp_offset,
             "data": self._temp_complexes.copy()
         })
         self._received_channels += 1
