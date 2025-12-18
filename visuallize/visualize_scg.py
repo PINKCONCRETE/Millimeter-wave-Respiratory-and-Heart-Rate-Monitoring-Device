@@ -275,7 +275,7 @@ def main() -> None:
     print("=" * 60)
 
     # 配置参数
-    serial_port = "COM7"
+    serial_port = "/dev/ttyACM1"
     baudrate = 921600
     channel_num = 8
     bins_per_channel = 10
@@ -372,7 +372,7 @@ def main() -> None:
 
 if __name__ == "__main__":
     # 设置matplotlib中文支持
-    plt.rcParams["font.sans-serif"] = ["SimHei", "Microsoft YaHei", "Arial"]
-    plt.rcParams["axes.unicode_minus"] = False
+    # plt.rcParams["font.sans-serif"] = ["SimHei", "Microsoft YaHei", "Arial"]
+    # plt.rcParams["axes.unicode_minus"] = False
 
     main()
