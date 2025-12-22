@@ -33,8 +33,8 @@ class MultiBinGradeProcessor(MMWProcessorThread):
         # 转换为numpy数组
         fft_data = np.array(self._frame_buffer)
         
-        # 计算能量最大的Bin
-        max_bin_idx = self._find_max_energy_bin(fft_data)
+        # 计算能量最大的Bin (旧逻辑，仅供参考，或用于备用)
+        # max_bin_idx = self._find_max_energy_bin(fft_data)
         
         scg_values = []
         scores = []
@@ -56,6 +56,23 @@ class MultiBinGradeProcessor(MMWProcessorThread):
             # 4. 计算评分 (20Hz以下能量占比)
             score = self._compute_score(scg_waveform)
             scores.append(score)
+            
+        # 更新逻辑：选择评分最高的Bin作为Max Bin (带滞后)
+        current_selected_bin = self._current_max_bin if 0 <= self._current_max_bin < self._bins_per_channel else 0
+        
+        max_score_idx = int(np.argmax(scores))
+        max_score = scores[max_score_idx]
+        current_bin_score = scores[current_selected_bin]
+        
+        HYSTERESIS_THRESHOLD = 0.05
+        
+        if max_score > current_bin_score + HYSTERESIS_THRESHOLD:
+            final_bin_idx = max_score_idx
+        else:
+            final_bin_idx = current_selected_bin
+            
+        max_bin_idx = final_bin_idx
+        self._current_max_bin = final_bin_idx
             
         # 输出结果
         result = {
