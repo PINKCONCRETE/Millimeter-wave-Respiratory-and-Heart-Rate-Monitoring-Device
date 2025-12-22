@@ -15,6 +15,43 @@ class SCGGradeProcessor(MMWProcessorThread):
     HIGHCUT = 40
     FILTER_ORDER = 4
 
+    def _compute_score_and_fft(self, signal: np.ndarray) -> tuple[float, np.ndarray, int]:
+        """计算信号评分和FFT频谱.
+        
+        Returns:
+            (score, fft_magnitude, n_fft)
+        """
+        # 去除直流分量
+        fft_signal = signal - np.mean(signal)
+        # 加窗 (Hanning window)
+        window = np.hanning(len(fft_signal))
+        
+        # 使用补零增加FFT点数到4096，获得更平滑的频谱
+        n_fft = 4096
+        fft_result = np.fft.fft(fft_signal * window, n=n_fft)
+        
+        # 取模值
+        fft_magnitude = np.abs(fft_result)
+        # 只取正频率部分 (N/2)
+        fft_magnitude = fft_magnitude[:n_fft//2]
+        # 归一化
+        if len(fft_signal) > 0:
+            fft_magnitude = fft_magnitude / len(fft_signal) * 2
+
+        # 计算信号质量分数 (20Hz以下能量占比)
+        idx_20hz = int(20 * n_fft / 200)
+        
+        # 计算能量谱 (幅度的平方)
+        energy_spectrum = fft_magnitude ** 2
+        total_energy = np.sum(energy_spectrum)
+        
+        score = 0.0
+        if total_energy > 0:
+            low_freq_energy = np.sum(energy_spectrum[:idx_20hz])
+            score = low_freq_energy / total_energy
+            
+        return score, fft_magnitude, n_fft
+
     def _generate_new_scg_point(self) -> None:
         """生成新的SCG点及自相关数据."""
         if len(self._frame_buffer) < self.MIN_BUFFER_SIZE:
@@ -23,19 +60,52 @@ class SCGGradeProcessor(MMWProcessorThread):
         # 转换为numpy数组
         fft_data = np.array(self._frame_buffer)
         
-        # 1. 找到能量最大的频率bin
-        max_bin_idx = self._find_max_energy_bin(fft_data)
-        self._current_max_bin = max_bin_idx
-
-        # 2. 提取相位数据
-        phase_data = self._extract_phase(fft_data, max_bin_idx)
-
-        # 3. 计算二阶导数 (SCG)
-        scg_waveform = self._compute_derivative_waveform(phase_data)
-
-        # 4. 过滤异常值
-        outlier_idx = np.abs(scg_waveform) > self.OUTLIER_THRESHOLD
-        scg_waveform[outlier_idx] = 0.0
+        # 寻找最佳Bin (基于评分，带滞后逻辑)
+        # 如果当前没有选中的Bin，或者_current_max_bin无效，则默认为0
+        current_selected_bin = self._current_max_bin if 0 <= self._current_max_bin < self._bins_per_channel else 0
+        
+        best_bin_idx = 0
+        max_score = -1.0
+        
+        # 存储所有Bin的计算结果，以便后续根据选择直接获取
+        # 格式: {bin_idx: (score, scg_waveform, fft_mag, n_fft)}
+        bin_results = {}
+        
+        # 遍历所有Bin计算评分
+        for bin_idx in range(self._bins_per_channel):
+             # 提取相位 -> SCG
+             phase_data = self._extract_phase(fft_data, bin_idx)
+             scg_waveform = self._compute_derivative_waveform(phase_data)
+             
+             # 过滤异常值
+             outlier_idx = np.abs(scg_waveform) > self.OUTLIER_THRESHOLD
+             scg_waveform[outlier_idx] = 0.0
+             
+             # 计算评分
+             score, fft_mag, n_fft = self._compute_score_and_fft(scg_waveform)
+             
+             bin_results[bin_idx] = (score, scg_waveform, fft_mag, n_fft)
+             
+             # 记录全局最高分
+             if score > max_score:
+                 max_score = score
+                 best_bin_idx = bin_idx
+        
+        # 滞后逻辑：
+        # 只有当全局最高分比当前选中Bin的分数高出阈值(0.05)时，才切换Bin
+        # 否则保持当前Bin不变
+        current_bin_score = bin_results[current_selected_bin][0]
+        HYSTERESIS_THRESHOLD = 0.05
+        
+        if max_score > current_bin_score + HYSTERESIS_THRESHOLD:
+            final_bin_idx = best_bin_idx
+        else:
+            final_bin_idx = current_selected_bin
+            
+        # 使用最终选择的Bin的数据
+        score, scg_waveform, fft_magnitude, n_fft = bin_results[final_bin_idx]
+        self._current_max_bin = final_bin_idx
+        max_bin_idx = final_bin_idx # 兼容变量名
         
         # 取最新的SCG值（用于滚动显示）
         latest_value = scg_waveform[-4]
@@ -58,36 +128,9 @@ class SCGGradeProcessor(MMWProcessorThread):
             corr = corr / len(signal_norm)
 
         # 6. 计算FFT
-        # 去除直流分量
-        fft_signal = signal - np.mean(signal)
-        # 加窗 (Hanning window)
-        window = np.hanning(len(fft_signal))
-        
-        # 使用补零增加FFT点数到4096，获得更平滑的频谱
-        n_fft = 4096
-        fft_result = np.fft.fft(fft_signal * window, n=n_fft)
-        
-        # 取模值
-        fft_magnitude = np.abs(fft_result)
-        # 只取正频率部分 (N/2)
-        fft_magnitude = fft_magnitude[:n_fft//2]
-        # 归一化 (注意：补零后的幅度归一化仍需除以原始信号长度)
-        fft_magnitude = fft_magnitude / len(fft_signal) * 2
-
+        # (已在循环中计算最佳Bin的FFT)
         # 7. 计算信号质量分数 (20Hz以下能量占比)
-        # Fs = 200Hz, n_fft = 4096
-        # 频率分辨率 = 200 / 4096 ~= 0.0488 Hz
-        # 20Hz 对应的索引 = 20 / (200/4096) = 409.6 -> 410
-        idx_20hz = int(20 * n_fft / 200)
-        
-        # 计算能量谱 (幅度的平方)
-        energy_spectrum = fft_magnitude ** 2
-        total_energy = np.sum(energy_spectrum)
-        
-        score = 0.0
-        if total_energy > 0:
-            low_freq_energy = np.sum(energy_spectrum[:idx_20hz])
-            score = low_freq_energy / total_energy
+        # (已在循环中计算)
 
         # 8. 周期分割与互相关矩阵计算
         corr_matrix = []
