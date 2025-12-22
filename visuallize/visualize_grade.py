@@ -40,6 +40,15 @@ class SCGGradeVisualizer:
         self.fig, (self.ax1, self.ax2) = plt.subplots(2, 1, figsize=(10, 8))
         self.fig.canvas.manager.set_window_title("SCG Grade & Autocorrelation")
         
+        # 子图3: 互相关矩阵 (新窗口)
+        self.fig2, self.ax3 = plt.subplots(figsize=(6, 5))
+        self.fig2.canvas.manager.set_window_title("Cycle Correlation Matrix")
+        self.im = self.ax3.imshow([[0]], cmap='coolwarm', vmin=-1, vmax=1, aspect='auto')
+        self.ax3.set_title("Cycle-to-Cycle Correlation")
+        self.ax3.set_xlabel("Cycle Index")
+        self.ax3.set_ylabel("Cycle Index")
+        self.cbar = self.fig2.colorbar(self.im, ax=self.ax3)
+
         # 子图1: SCG波形 (滚动)
         self.line_scg, = self.ax1.plot([], [], 'b-', linewidth=1, label='SCG')
         self.ax1.set_title("SCG Waveform (Max Energy Bin)", fontsize=12)
@@ -54,6 +63,18 @@ class SCGGradeVisualizer:
             verticalalignment="top",
             bbox={"boxstyle": "round", "facecolor": "wheat", "alpha": 0.5},
             fontsize=10,
+        )
+        
+        # 分数大字显示 (右上角)
+        self.score_text = self.ax1.text(
+            0.95, 0.95, "",
+            transform=self.ax1.transAxes,
+            verticalalignment="top",
+            horizontalalignment="right",
+            fontsize=24,
+            fontweight='bold',
+            color='red',
+            bbox={"boxstyle": "round", "facecolor": "white", "alpha": 0.8, "edgecolor": "red"}
         )
         
         # 子图2: FFT频谱 (实时刷新)
@@ -71,7 +92,7 @@ class SCGGradeVisualizer:
         self.n_fft = 4096 # 默认值，会根据数据更新
         self.freqs = np.linspace(0, self.fs/2, self.n_fft // 2)
 
-    def update_data(self, scg_value: float, fft_data: list[float], timestamp: float, max_bin: int, offset: int, n_fft: int = 4096, score: float = 0.0) -> None:
+    def update_data(self, scg_value: float, fft_data: list[float], timestamp: float, max_bin: int, offset: int, n_fft: int = 4096, score: float = 0.0, corr_matrix: list[list[float]] = None) -> None:
         """更新数据."""
         self.scg_data.append(scg_value)
         self.time_data.append(timestamp)
@@ -79,6 +100,8 @@ class SCGGradeVisualizer:
         self.max_bin = max_bin
         self.offset = offset
         self.score = score
+        if corr_matrix and len(corr_matrix) > 0:
+            self.corr_matrix = np.array(corr_matrix)
         
         # 如果FFT点数变化，更新频率轴
         if n_fft != self.n_fft:
@@ -124,14 +147,26 @@ class SCGGradeVisualizer:
         
         # 更新文本
         status_str = (
-            f"Score: {self.score:.4f}\n"
             f"Max Bin: {self.max_bin}\n"
             f"Offset: {self.offset}\n"
             f"Buffer: {len(self.scg_data)}"
         )
         self.status_text.set_text(status_str)
+        
+        # 更新大字分数
+        score_val = int(self.score * 100)
+        self.score_text.set_text(f"Score: {score_val}")
+        
+        # 更新互相关矩阵
+        if hasattr(self, 'corr_matrix') and self.corr_matrix is not None:
+            self.im.set_data(self.corr_matrix)
+            # 自动调整范围
+            n = self.corr_matrix.shape[0]
+            self.im.set_extent([-0.5, n-0.5, n-0.5, -0.5]) # 调整坐标轴
+            self.ax3.set_xlim(-0.5, n-0.5)
+            self.ax3.set_ylim(n-0.5, -0.5)
 
-        return self.line_scg, self.line_fft, self.status_text
+        return self.line_scg, self.line_fft, self.status_text, self.score_text, self.im
 
 def main():
     print("=" * 60)
@@ -162,7 +197,8 @@ def main():
                     max_bin=res["max_bin"],
                     offset=res.get("offset", 0),
                     n_fft=res.get("n_fft", 4096),
-                    score=res.get("score", 0.0)
+                    score=res.get("score", 0.0),
+                    corr_matrix=res.get("corr_matrix", [])
                 )
                 count += 1
             except Exception:

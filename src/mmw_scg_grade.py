@@ -1,11 +1,19 @@
 import numpy as np
+from scipy.signal import butter, filtfilt
 from src.mmw_processor import MMWProcessorThread
 
 class SCGGradeProcessor(MMWProcessorThread):
     """SCG评分与自相关分析处理线程.
     
     专注于单通道（最大能量Bin）的SCG提取，并计算其自相关函数。
+    同时进行周期分割与相似度矩阵计算。
     """
+    
+    # 滤波参数 (复用 mmw_heart_rate.py)
+    SAMPLING_RATE = 200
+    LOWCUT = 20
+    HIGHCUT = 40
+    FILTER_ORDER = 4
 
     def _generate_new_scg_point(self) -> None:
         """生成新的SCG点及自相关数据."""
@@ -81,6 +89,11 @@ class SCGGradeProcessor(MMWProcessorThread):
             low_freq_energy = np.sum(energy_spectrum[:idx_20hz])
             score = low_freq_energy / total_energy
 
+        # 8. 周期分割与互相关矩阵计算
+        corr_matrix = []
+        if self._generated_scg_points % 20 == 0: # 每20帧(0.1s)计算一次，避免过高负载
+             corr_matrix = self._compute_cycle_correlation_matrix(scg_waveform)
+
         # 构造输出
         result = {
             "frame_idx": self._generated_scg_points,
@@ -91,8 +104,156 @@ class SCGGradeProcessor(MMWProcessorThread):
             "max_bin": max_bin_idx,
             "offset": self._current_offset,
             "n_fft": n_fft, # 传递FFT点数
-            "score": score  # 信号质量分数
+            "score": score,  # 信号质量分数
+            "corr_matrix": corr_matrix # 互相关矩阵
         }
         
         self._output_queue.put(result)
         self._generated_scg_points += 1
+
+    def _compute_cycle_correlation_matrix(self, scg_data: np.ndarray) -> list[list[float]]:
+        """计算周期互相关矩阵.
+        
+        1. 带通滤波 (20-40Hz)
+        2. 峰值检测
+        3. 切片与重采样
+        4. 计算相关系数矩阵
+        """
+        # 1. 预处理与滤波
+        try:
+            # 归一化
+            max_val = np.max(np.abs(scg_data))
+            if max_val == 0: return []
+            norm_data = scg_data / max_val
+            
+            # 滤波
+            b, a = butter(
+                self.FILTER_ORDER,
+                [self.LOWCUT / (self.SAMPLING_RATE / 2), self.HIGHCUT / (self.SAMPLING_RATE / 2)],
+                btype='band',
+                analog=False
+            )
+            filtered_data = filtfilt(b, a, norm_data)
+            
+            # 再次归一化
+            max_val = np.max(np.abs(filtered_data))
+            if max_val == 0: return []
+            filtered_data = filtered_data / max_val
+            
+        except Exception:
+            return []
+
+        # 2. 峰值检测 (复用 heart_rate_old 逻辑)
+        peaks = self._detect_peaks_multistep(filtered_data)
+        if len(peaks) < 3: # 至少需要3个峰才能形成2个完整周期
+            return []
+            
+        # 3. 切片与重采样
+        segments = []
+        target_length = 100 # 统一重采样到100点
+        
+        # 使用峰值间的数据作为周期
+        for i in range(len(peaks) - 1):
+            start = peaks[i]
+            end = peaks[i+1]
+            
+            # 简单的异常周期过滤 (50bpm -> 240点, 150bpm -> 80点)
+            # 既然是SCG，可能包含更多高频成分，这里放宽一点
+            if end - start < 40 or end - start > 300:
+                continue
+                
+            # 提取原始SCG数据片段 (注意：使用原始SCG还是滤波后的？通常原始波形包含更多形态信息)
+            # 这里我们使用原始SCG数据(scg_data)进行形态比较
+            segment = scg_data[start:end]
+            
+            # 重采样
+            x_old = np.linspace(0, 1, len(segment))
+            x_new = np.linspace(0, 1, target_length)
+            segment_resampled = np.interp(x_new, x_old, segment)
+            
+            # 归一化片段 (去除幅度差异，只比形状)
+            seg_mean = np.mean(segment_resampled)
+            seg_std = np.std(segment_resampled)
+            if seg_std > 1e-6:
+                segment_resampled = (segment_resampled - seg_mean) / seg_std
+            else:
+                segment_resampled = segment_resampled - seg_mean
+                
+            segments.append(segment_resampled)
+            
+        if len(segments) < 2:
+            return []
+            
+        # 4. 计算相关系数矩阵
+        n_segs = len(segments)
+        matrix = np.zeros((n_segs, n_segs))
+        
+        for i in range(n_segs):
+            for j in range(n_segs):
+                # Pearson correlation
+                # 由于已经归一化 (mean=0, std=1)，corr = mean(a * b)
+                corr = np.mean(segments[i] * segments[j])
+                matrix[i, j] = corr
+                
+        return matrix.tolist()
+
+    def _detect_peaks_multistep(self, filtered_data: np.ndarray) -> np.ndarray:
+        """多步骤峰值检测算法 (复用自 mmw_heart_rate.py)."""
+        sample_points = len(filtered_data)
+        y = filtered_data
+        
+        # 第一步：找到所有局部最大值
+        peak_indices_1 = []
+        if sample_points > 1:
+            if y[0] > y[1]: peak_indices_1.append(0)
+            for i in range(1, sample_points - 1):
+                if y[i] >= y[i-1] and y[i] >= y[i+1]:
+                    peak_indices_1.append(i)
+            if y[sample_points-2] < y[sample_points-1]:
+                peak_indices_1.append(sample_points-1)
+        
+        if len(peak_indices_1) < 2: return np.array([])
+
+        # 第二步：在局部最大值中找更大的峰值
+        peak_indices_2 = []
+        if len(peak_indices_1) >= 2:
+            if y[peak_indices_1[0]] > y[peak_indices_1[1]]:
+                peak_indices_2.append(peak_indices_1[0])
+            for i in range(1, len(peak_indices_1) - 1):
+                index = peak_indices_1[i]
+                index_b = peak_indices_1[i - 1]
+                index_a = peak_indices_1[i + 1]
+                if y[index] >= y[index_b] and y[index] >= y[index_a]:
+                    peak_indices_2.append(index)
+            if y[peak_indices_1[-2]] < y[peak_indices_1[-1]]:
+                peak_indices_2.append(peak_indices_1[-1])
+
+        # 第三步：筛选满足阈值的峰值
+        peak_indices_3 = []
+        for index in peak_indices_2:
+            if y[index] >= 0.3:
+                peak_indices_3.append(index)
+        
+        if len(peak_indices_3) < 2: return np.array([])
+
+        # 第四步：合并间隔1-40的峰值
+        peak_indices_4 = []
+        j = 0
+        while j < len(peak_indices_3) - 1:
+            index = peak_indices_3[j]
+            index_a = peak_indices_3[j + 1]
+            if 1 <= index_a - index <= 40:
+                if y[index_a] >= y[index]: select_index = index_a
+                else: select_index = index
+                j += 1
+                peak_indices_4.append(select_index)
+            else:
+                peak_indices_4.append(index)
+            j += 1
+        
+        if len(peak_indices_3) > 0 and (not peak_indices_4 or peak_indices_3[-1] != peak_indices_4[-1]):
+             # 简单处理最后一个点逻辑，确保不漏
+             if len(peak_indices_4) == 0 or peak_indices_3[-1] - peak_indices_4[-1] > 40:
+                 peak_indices_4.append(peak_indices_3[-1])
+
+        return np.array(peak_indices_4)
