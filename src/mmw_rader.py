@@ -84,6 +84,15 @@ class MMWRadarThread(threading.Thread):
 
         # 线程控制
         self._running = False
+        
+        # 原始数据录制
+        self._raw_file = None
+        self._raw_file_lock = threading.Lock()
+
+    def set_raw_file(self, file_handle) -> None:
+        """设置原始数据录制文件句柄"""
+        with self._raw_file_lock:
+            self._raw_file = file_handle
 
     @staticmethod
     def _init_serial(port: str, baudrate: int) -> serial.Serial | None:
@@ -264,6 +273,17 @@ class MMWRadarThread(threading.Thread):
                     # 一次性读取所有可用字节
                     byte_data = self._serial.read(waiting)
                     self._received_bytes += len(byte_data)
+                    
+                    # 原始数据录制
+                    with self._raw_file_lock:
+                        if self._raw_file:
+                            try:
+                                # 转换为十六进制字符串并写入
+                                hex_str = " ".join([f"{b:02X}" for b in byte_data])
+                                self._raw_file.write(hex_str + " ")
+                            except Exception as e:
+                                print(f"写入原始数据失败: {e}")
+
                     # 逐字节解码
                     for byte in byte_data:
                         self.decode(byte)
