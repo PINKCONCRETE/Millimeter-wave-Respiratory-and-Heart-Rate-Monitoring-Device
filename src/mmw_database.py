@@ -281,11 +281,11 @@ class UnifiedDatabaseWriter(threading.Thread):
         
         timestamp = datetime.now()
         
-        if self._heart_waveform_buffer:
-            last_hr = self._heart_waveform_buffer[-1]
-            delta_hr = heart_rate_int - last_hr
-            if abs(delta_hr) > 5:
-                heart_rate_int = last_hr + 5 * (delta_hr / abs(delta_hr))
+        # if self._heart_waveform_buffer:
+        #     last_hr = self._heart_waveform_buffer[-1]
+        #     delta_hr = heart_rate_int - last_hr
+        #     if abs(delta_hr) > 5:
+        #         heart_rate_int = last_hr + 5 * (delta_hr / abs(delta_hr))
         # last_hr = 
 
         # if(not self._human_status):

@@ -20,8 +20,8 @@ from src.mmw_heart_rate import MMWHeartRateThread  # noqa: E402
 from src.mmw_rader import MMWRadarThread  # noqa: E402
 
 # 处理中文和负号显示问题
-plt.rcParams["font.sans-serif"] = ["SimHei"]  # 中文字体
-plt.rcParams["axes.unicode_minus"] = False  # 负号显示
+# plt.rcParams["font.sans-serif"] = ["SimHei"]  # 中文字体
+# plt.rcParams["axes.unicode_minus"] = False  # 负号显示
 
 
 class HeartRateVisualizer:
@@ -301,6 +301,6 @@ if __name__ == "__main__":
 
     # 启动（需要根据实际情况修改串口名称）
     visualizer.start(
-        serial_port="COM7",
+        serial_port="/dev/ttyACM1",
         serial_baudrate=921600,
     )

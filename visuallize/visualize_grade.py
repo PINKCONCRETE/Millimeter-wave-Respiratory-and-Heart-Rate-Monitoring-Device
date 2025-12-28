@@ -174,7 +174,7 @@ def main():
     print("=" * 60)
     
     # 配置
-    serial_port = "COM7"
+    serial_port = "/dev/ttyACM1"
     baudrate = 921600
     
     # 队列
@@ -248,6 +248,6 @@ def main():
         radar_thread.join(timeout=1)
 
 if __name__ == "__main__":
-    plt.rcParams["font.sans-serif"] = ["SimHei", "Microsoft YaHei", "Arial"]
-    plt.rcParams["axes.unicode_minus"] = False
+    # plt.rcParams["font.sans-serif"] = ["SimHei", "Microsoft YaHei", "Arial"]
+    # plt.rcParams["axes.unicode_minus"] = False
     main()

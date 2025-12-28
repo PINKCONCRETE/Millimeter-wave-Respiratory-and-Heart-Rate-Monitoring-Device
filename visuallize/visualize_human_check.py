@@ -21,8 +21,8 @@ from src.mmw_human_check import MMWHumanCheckThread  # noqa: E402
 from src.mmw_rader import MMWRadarThread  # noqa: E402
 
 # 处理中文和负号显示问题
-plt.rcParams["font.sans-serif"] = ["SimHei"]  # 中文字体
-plt.rcParams["axes.unicode_minus"] = False  # 负号显示
+# plt.rcParams["font.sans-serif"] = ["SimHei"]  # 中文字体
+# plt.rcParams["axes.unicode_minus"] = False  # 负号显示
 
 
 class HumanCheckVisualizer:
@@ -273,7 +273,7 @@ class HumanCheckVisualizer:
 
     def start(
         self,
-        serial_port: str = "COM7",
+        serial_port: str = "/dev/ttyACM1",
         serial_baudrate: int = 921600,
     ) -> None:
         """启动可视化.
