@@ -1,306 +1,425 @@
-"""毫米波心率数据实时可视化脚本.
+"""毫米波雷达综合可视化脚本 (SCG波形 + 心率 + 暂停功能).
 
-使用matplotlib实时显示滤波后的心率波形、心率趋势和HRV指标。
+集成 visualize_grade_all.py 的多Bin SCG波形显示
+和 visualize_heart_rate.py 的心率趋势显示。
+支持暂停/继续功能。
 """
 import sys
 import time
+import threading
 from collections import deque
+from queue import Queue, Empty
 from pathlib import Path
-from queue import Queue
+import copy
 
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.animation import FuncAnimation
-from matplotlib.gridspec import GridSpec
+from matplotlib.widgets import Button
 
 # 添加父目录到sys.path以支持导入src模块
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.mmw_heart_rate import MMWHeartRateThread  # noqa: E402
-from src.mmw_rader import MMWRadarThread  # noqa: E402
+from src.mmw_rader import MMWRadarThread
+from src.mmw_processor import MMWProcessorThread
+from src.mmw_heart_rate import MMWHeartRateThread
 
-# 处理中文和负号显示问题
-plt.rcParams["font.sans-serif"] = ["SimHei"]  # 中文字体
-plt.rcParams["axes.unicode_minus"] = False  # 负号显示
+# ==========================================
+# 1. 复制并修改 MultiBinGradeProcessor
+# ==========================================
+class MultiBinGradeProcessor(MMWProcessorThread):
+    """多Bin评分处理线程."""
+    
+    def _generate_new_scg_point(self) -> None:
+        """重写生成函数，输出所有Bin的数据及评分."""
+        if len(self._frame_buffer) < self.MIN_BUFFER_SIZE:
+            return
 
+        fft_data = np.array(self._frame_buffer)
+        
+        scg_values = []
+        scores = []
+        
+        for bin_idx in range(self._bins_per_channel):
+            phase_data = self._extract_phase(fft_data, bin_idx)
+            scg_waveform = self._compute_derivative_waveform(phase_data)
+            outlier_idx = np.abs(scg_waveform) > self.OUTLIER_THRESHOLD
+            scg_waveform[outlier_idx] = 0.0
+            
+            latest_value = scg_waveform[-4]
+            scg_values.append(float(latest_value))
+            
+            score = self._compute_score(scg_waveform)
+            scores.append(score)
+            
+        current_selected_bin = self._current_max_bin if 0 <= self._current_max_bin < self._bins_per_channel else 0
+        
+        max_score_idx = int(np.argmax(scores))
+        max_score = scores[max_score_idx]
+        current_bin_score = scores[current_selected_bin]
+        
+        HYSTERESIS_THRESHOLD = 0.05
+        
+        if max_score > current_bin_score + HYSTERESIS_THRESHOLD:
+            final_bin_idx = max_score_idx
+        else:
+            final_bin_idx = current_selected_bin
+            
+        max_bin_idx = final_bin_idx
+        self._current_max_bin = final_bin_idx
+            
+        result = {
+            "type": "scg",
+            "frame_idx": self._generated_scg_points,
+            "scg_values": scg_values,
+            "scores": scores,
+            "timestamp": self._generated_scg_points * self.TIME_STEP,
+            "offset": self._current_offset,
+            "max_bin": max_bin_idx
+        }
+        self._output_queue.put(result)
+        
+        self._generated_scg_points += 1
 
-class HeartRateVisualizer:
-    """毫米波心率数据实时可视化器.
-
-    使用matplotlib动画实时显示心率波形、心率趋势和HRV指标。
-
-    Attributes:
-        waveform_window_size: 心率波形滑动窗口大小（数据点数）
-        hr_history_size: 心率历史记录长度
-
-    """
-
-    def __init__(
-        self,
-        waveform_window_size: int = 1000,
-        hr_history_size: int = 20,
-    ) -> None:
-        """初始化可视化器.
-
-        Args:
-            waveform_window_size: 心率波形滑动窗口大小（默认1000个数据点）
-            hr_history_size: 心率历史记录长度（默认20次）
-
-        """
-        self.waveform_window_size = waveform_window_size
-        self.hr_history_size = hr_history_size
-
-        # 心率波形数据缓冲区（滤波后的归一化数据）
-        self.waveform_data = deque(maxlen=waveform_window_size)
-        self.waveform_time = deque(maxlen=waveform_window_size)
-
-        # 心率趋势数据
-        self.hr_history = deque(maxlen=hr_history_size)
-        self.hr_time = deque(maxlen=hr_history_size)
-
-        # HRV指标历史
-        self.sdnn_history = deque(maxlen=hr_history_size)
-        self.rmssd_history = deque(maxlen=hr_history_size)
-
-        # 当前统计信息
-        self.current_hr = 0.0
-        self.current_sdnn = 0.0
-        self.current_rmssd = 0.0
-        self.current_pnn50 = 0.0
-        self.peak_count = 0
-        self.max_bin = 0
-        self.status = "waiting"
-
-        # 初始化图形
-        self.fig = None
-        self.axes = []
-        self.lines = []
-        self.text_objects = []
-
-        # 时间基准
-        self.start_time = time.time()
-        self.frame_count = 0
-
-    def _init_plot(self) -> None:
-        """初始化matplotlib图形和子图."""
-        self.fig = plt.figure(figsize=(15, 10))
-        self.fig.suptitle("毫米波心率实时监测", fontsize=16, fontweight="bold")
-
-        # 使用GridSpec创建复杂布局
-        gs = GridSpec(3, 2, figure=self.fig, hspace=0.3, wspace=0.3)
-
-        # 子图1: 滤波后的心率波形 (占据上方两列)
-        ax1 = self.fig.add_subplot(gs[0, :])
-        ax1.set_title("心率波形（带通滤波 20-40Hz）", fontsize=12)
-        ax1.set_xlabel("样本点")
-        ax1.set_ylabel("归一化幅度")
-        ax1.grid(True, alpha=0.3)
-        (line1,) = ax1.plot([], [], "b-", linewidth=1, label="心率波形")
-        ax1.legend(loc="upper right")
-        ax1.set_ylim(-1, 1)
-
-        # 子图2: 心率趋势
-        ax2 = self.fig.add_subplot(gs[1, 0])
-        ax2.set_title("心率趋势", fontsize=12)
-        ax2.set_xlabel("测量次数")
-        ax2.set_ylabel("心率 (bpm)")
-        ax2.set_ylim(40, 180)
-        ax2.grid(True, alpha=0.3)
-        (line2,) = ax2.plot([], [], "r-o", linewidth=2, markersize=4, label="心率")
-        ax2.axhline(y=60, color="g", linestyle="--", alpha=0.5, label="正常下限")
-        ax2.axhline(y=100, color="orange", linestyle="--", alpha=0.5, label="正常上限")
-        ax2.legend(loc="upper right", fontsize=8)
-
-        # 子图3: HRV - SDNN
-        ax3 = self.fig.add_subplot(gs[1, 1])
-        ax3.set_title("HRV - SDNN (标准差)", fontsize=12)
-        ax3.set_xlabel("测量次数")
-        ax3.set_ylabel("SDNN (ms)")
-        ax3.grid(True, alpha=0.3)
-        (line3,) = ax3.plot([], [], "g-o", linewidth=2, markersize=4, label="SDNN")
-        ax3.legend(loc="upper right", fontsize=8)
-
-        # 子图4: HRV - RMSSD
-        ax4 = self.fig.add_subplot(gs[2, 0])
-        ax4.set_title("HRV - RMSSD (均方根)", fontsize=12)
-        ax4.set_xlabel("测量次数")
-        ax4.set_ylabel("RMSSD (ms)")
-        ax4.grid(True, alpha=0.3)
-        (line4,) = ax4.plot([], [], "m-o", linewidth=2, markersize=4, label="RMSSD")
-        ax4.legend(loc="upper right", fontsize=8)
-
-        # 子图5: 统计信息文本显示
-        ax5 = self.fig.add_subplot(gs[2, 1])
-        ax5.axis("off")
-        ax5.set_title("实时统计信息", fontsize=12)
-
-        # 创建文本对象
-        text_status = ax5.text(0.1, 0.95, "", fontsize=10, verticalalignment="top")
-        text_hr = ax5.text(0.1, 0.80, "", fontsize=12, verticalalignment="top", fontweight="bold")
-        text_sdnn = ax5.text(0.1, 0.65, "", fontsize=10, verticalalignment="top")
-        text_rmssd = ax5.text(0.1, 0.50, "", fontsize=10, verticalalignment="top")
-        text_pnn50 = ax5.text(0.1, 0.35, "", fontsize=10, verticalalignment="top")
-        text_peaks = ax5.text(0.1, 0.20, "", fontsize=10, verticalalignment="top")
-        text_bin = ax5.text(0.1, 0.05, "", fontsize=10, verticalalignment="top")
-
-        self.axes = [ax1, ax2, ax3, ax4, ax5]
-        self.lines = [line1, line2, line3, line4]
-        self.text_objects = [text_status, text_hr, text_sdnn, text_rmssd, text_pnn50, text_peaks, text_bin]
-
-    def _update_plot(self, frame: int) -> list:
-        """更新图形数据（matplotlib动画回调）.
-
-        Args:
-            frame: 动画帧编号
-
-        Returns:
-            更新的artist对象列表
-
-        """
-        # 更新心率波形
-        if len(self.waveform_data) > 0:
-            x_data = list(range(len(self.waveform_data)))
-            self.lines[0].set_data(x_data, list(self.waveform_data))
-            self.axes[0].set_xlim(0, max(len(self.waveform_data), 200))
-
-        # 更新心率趋势
-        if len(self.hr_history) > 0:
-            x_data = list(range(len(self.hr_history)))
-            self.lines[1].set_data(x_data, list(self.hr_history))
-            self.axes[1].set_xlim(-1, max(len(self.hr_history) + 1, 5))
-
-        # 更新SDNN
-        if len(self.sdnn_history) > 0:
-            x_data = list(range(len(self.sdnn_history)))
-            self.lines[2].set_data(x_data, list(self.sdnn_history))
-            self.axes[2].set_xlim(-1, max(len(self.sdnn_history) + 1, 5))
-            self.axes[2].set_ylim(0, max(max(self.sdnn_history) * 1.2, 100))
-
-        # 更新RMSSD
-        if len(self.rmssd_history) > 0:
-            x_data = list(range(len(self.rmssd_history)))
-            self.lines[3].set_data(x_data, list(self.rmssd_history))
-            self.axes[3].set_xlim(-1, max(len(self.rmssd_history) + 1, 5))
-            self.axes[3].set_ylim(0, max(max(self.rmssd_history) * 1.2, 100))
-
-        # 更新统计信息文本
-        status_color = "green" if self.status == "succeeded" else "red"
-        self.text_objects[0].set_text(f"状态: {self.status}")
-        self.text_objects[0].set_color(status_color)
-        self.text_objects[1].set_text(f"当前心率: {self.current_hr:.1f} bpm")
-        self.text_objects[2].set_text(f"SDNN: {self.current_sdnn:.2f} ms")
-        self.text_objects[3].set_text(f"RMSSD: {self.current_rmssd:.2f} ms")
-        self.text_objects[4].set_text(f"pNN50: {self.current_pnn50:.2f} %")
-        self.text_objects[5].set_text(f"峰值数: {self.peak_count}")
-        self.text_objects[6].set_text(f"能量最大Bin: {self.max_bin}")
-
-        return self.lines + self.text_objects
-
-    def update_data(self, hr_dict: dict) -> None:
-        """更新可视化数据.
-
-        Args:
-            hr_dict: 包含心率信息的字典
-
-        """
-        # 更新心率波形（最后200个点）
-        waveform = hr_dict.get("filtered_waveform", [])
-        if len(waveform) > 0:
-            self.waveform_data.clear()
-            for value in waveform:
-                self.waveform_data.append(value)
-
-        # 更新心率和HRV指标
-        self.status = hr_dict.get("status", "failed")
-        self.current_hr = hr_dict.get("heart_rate", 0.0)
-        self.current_sdnn = hr_dict.get("hrv_sdnn", 0.0)
-        self.current_rmssd = hr_dict.get("hrv_rmssd", 0.0)
-        self.current_pnn50 = hr_dict.get("hrv_pnn50", 0.0)
-        self.peak_count = hr_dict.get("peak_count", 0)
-        self.max_bin = hr_dict.get("max_bin", 0)
-
-        # 添加到历史记录
-        self.hr_history.append(self.current_hr)
-        self.sdnn_history.append(self.current_sdnn)
-        self.rmssd_history.append(self.current_rmssd)
-
-        self.frame_count += 1
-
-        # 控制台输出
-        print(
-            f"[测量 {self.frame_count}] 心率: {self.current_hr:.1f} bpm | "
-            f"SDNN: {self.current_sdnn:.1f} ms | "
-            f"RMSSD: {self.current_rmssd:.1f} ms | "
-            f"峰值: {self.peak_count}"
-        )
-
-    def start(
-        self,
-        serial_port: str = "COM7",
-        serial_baudrate: int = 921600,
-    ) -> None:
-        """启动可视化.
-
-        Args:
-            serial_port: 串口名称
-            serial_baudrate: 串口波特率
-
-        """
-        # 创建数据队列
-        data_queue = Queue()
-
-        # 初始化图形
-        self._init_plot()
-
-        # 启动雷达线程
-        print(f"正在连接雷达设备: {serial_port} @ {serial_baudrate} bps")
-        radar_thread = MMWRadarThread(
-            output_queue=data_queue,
-            serial_port=serial_port,
-            serial_baudrate=serial_baudrate,
-        )
-
-        # 启动心率处理线程
-        heart_rate_thread = MMWHeartRateThread(
-            input_queue=data_queue,
-            buffer_size=1000,
-            callback=self.update_data,
-        )
-
-        radar_thread.start()
-        heart_rate_thread.start()
-
-        print("心率可视化已启动，按Ctrl+C停止...")
-        print("-" * 60)
-
-        # 启动动画（必须在self.fig不为None时调用）
-        if self.fig is not None:
-            ani = FuncAnimation(
-                self.fig,
-                self._update_plot,
-                interval=100,  # 100ms刷新一次
-                blit=True,
-                cache_frame_data=False,
-            )
-
+    def _compute_score(self, signal: np.ndarray) -> float:
         try:
-            plt.show()
-        except KeyboardInterrupt:
-            print("\n正在停止...")
-        finally:
-            heart_rate_thread.stop()
-            print("心率可视化已停止")
+            signal = signal - np.mean(signal)
+            window = np.hanning(len(signal))
+            n_fft = 4096
+            fft_result = np.fft.fft(signal * window, n=n_fft)
+            fft_magnitude = np.abs(fft_result)
+            fft_magnitude = fft_magnitude[:n_fft//2]
+            
+            energy_spectrum = fft_magnitude ** 2
+            total_energy = np.sum(energy_spectrum)
+            
+            if total_energy <= 0:
+                return 0.0
+                
+            idx_20hz = int(20 * n_fft / 200)
+            low_freq_energy = np.sum(energy_spectrum[:idx_20hz])
+            
+            return low_freq_energy / total_energy
+        except Exception:
+            return 0.0
 
+# ==========================================
+# 2. 数据分发线程
+# ==========================================
+class DataDispatcher(threading.Thread):
+    """将雷达数据分发给SCG处理器和心率处理器."""
+    def __init__(self, input_queue, queues_out):
+        super().__init__(daemon=True)
+        self.input_queue = input_queue
+        self.queues_out = queues_out
+        self.running = True
+
+    def run(self):
+        while self.running:
+            try:
+                data = self.input_queue.get(timeout=1.0)
+                for q in self.queues_out:
+                    q.put(data)
+            except Empty:
+                continue
+            except Exception as e:
+                print(f"Dispatcher error: {e}")
+
+    def stop(self):
+        self.running = False
+
+# ==========================================
+# 3. 综合可视化器
+# ==========================================
+class CombinedVisualizer:
+    """综合可视化器 (SCG + Heart Rate)."""
+
+    def __init__(self, window_size: int = 1000, bins_num: int = 10, hr_history_size: int = 50) -> None:
+        self.window_size = window_size
+        self.bins_num = bins_num
+        self.hr_history_size = hr_history_size
+        
+        # SCG 数据
+        self.scg_data = [deque(maxlen=window_size) for _ in range(bins_num)]
+        self.time_data = deque(maxlen=window_size)
+        self.scores = [0.0] * bins_num
+        self.max_bin = 0
+        self.offset = 0
+        
+        # 心率数据
+        self.hr_history = deque(maxlen=hr_history_size)
+        self.current_hr = 0.0
+        self.hr_status = "waiting"
+        
+        # 暂停状态
+        self.is_paused = False
+        
+        # 创建图形
+        self.figs = []
+        self.axes_list = []
+        self.lines = []
+        self.score_texts = []
+        
+        # Figure 1: Bins 0-4
+        fig1, axes1 = plt.subplots(5, 1, figsize=(8, 10), sharex=True)
+        fig1.canvas.manager.set_window_title("SCG Waveforms (Bins 0-4)")
+        self.figs.append(fig1)
+        self.axes_list.extend(axes1.flatten() if isinstance(axes1, np.ndarray) else [axes1])
+
+        # Figure 2: Bins 5-9
+        fig2, axes2 = plt.subplots(5, 1, figsize=(8, 10), sharex=True)
+        fig2.canvas.manager.set_window_title("SCG Waveforms (Bins 5-9)")
+        self.figs.append(fig2)
+        self.axes_list.extend(axes2.flatten() if isinstance(axes2, np.ndarray) else [axes2])
+        
+        # Figure 3: Heart Rate Trend
+        fig3, ax3 = plt.subplots(figsize=(8, 4))
+        fig3.canvas.manager.set_window_title("Heart Rate Trend")
+        self.figs.append(fig3)
+        self.hr_ax = ax3
+        
+        # 初始化 SCG 线条和文本
+        colors = plt.cm.jet(np.linspace(0, 1, bins_num))
+        self.default_colors = colors
+        
+        for i in range(bins_num):
+            ax = self.axes_list[i]
+            line, = ax.plot([], [], color=colors[i], linewidth=1)
+            self.lines.append(line)
+            ax.grid(True, alpha=0.3)
+            ax.set_ylabel(f"Bin {i}", fontsize=9)
+            
+            score_text = ax.text(
+                0.98, 0.90, "Score: 0",
+                transform=ax.transAxes,
+                verticalalignment="top",
+                horizontalalignment="right",
+                fontsize=10,
+                fontweight='bold',
+                color='red',
+                bbox={"boxstyle": "round", "facecolor": "white", "alpha": 0.8, "edgecolor": "none"}
+            )
+            self.score_texts.append(score_text)
+
+        self.axes_list[4].set_xlabel("Time (s)")
+        self.axes_list[9].set_xlabel("Time (s)")
+        
+        # 初始化心率图
+        self.hr_ax.set_title("Heart Rate Trend", fontsize=12)
+        self.hr_ax.set_xlabel("Measurements")
+        self.hr_ax.set_ylabel("BPM")
+        self.hr_ax.set_ylim(40, 160)
+        self.hr_ax.grid(True, alpha=0.3)
+        self.hr_line, = self.hr_ax.plot([], [], "r-o", linewidth=2)
+        self.hr_text = self.hr_ax.text(0.02, 0.9, "HR: --", transform=self.hr_ax.transAxes, fontsize=14, fontweight='bold')
+        
+        # 添加暂停按钮 (在 Figure 3 上)
+        self.pause_ax = fig3.add_axes([0.8, 0.02, 0.1, 0.075])
+        self.pause_btn = Button(self.pause_ax, 'Pause')
+        self.pause_btn.on_clicked(self.toggle_pause)
+        
+        # 状态文本
+        self.status_text = self.axes_list[0].text(
+            0.02, 0.95, "", transform=self.axes_list[0].transAxes,
+            verticalalignment="top", fontsize=9,
+            bbox={"boxstyle": "round", "facecolor": "wheat", "alpha": 0.5}
+        )
+
+    def toggle_pause(self, event):
+        self.is_paused = not self.is_paused
+        self.pause_btn.label.set_text('Resume' if self.is_paused else 'Pause')
+
+    def update_scg(self, res: dict):
+        if self.is_paused: return
+        
+        scg_values = res["scg_values"]
+        scores = res["scores"]
+        timestamp = res["timestamp"]
+        
+        for i, val in enumerate(scg_values):
+            if i < len(self.scg_data):
+                self.scg_data[i].append(val)
+        
+        self.time_data.append(timestamp)
+        self.scores = scores
+        self.max_bin = res.get("max_bin", 0)
+        self.offset = res.get("offset", 0)
+
+    def update_hr(self, res: dict):
+        if self.is_paused: return
+        
+        hr = res.get("heart_rate", 0)
+        self.current_hr = hr
+        self.hr_status = res.get("status", "unknown")
+        if hr > 0:
+            self.hr_history.append(hr)
+
+    def _update_scg_fig(self, start_idx, end_idx):
+        if not self.time_data:
+            return self.lines[start_idx:end_idx]
+            
+        times = np.array(self.time_data)
+        artists = []
+        
+        for i in range(start_idx, end_idx):
+            line = self.lines[i]
+            ax = self.axes_list[i]
+            text = self.score_texts[i]
+            
+            # 高亮最大Bin
+            if i == self.max_bin:
+                line.set_color('red')
+                line.set_linewidth(2)
+                text.set_color('red')
+            else:
+                line.set_color(self.default_colors[i])
+                line.set_linewidth(1)
+                text.set_color('gray')
+            
+            if len(self.scg_data[i]) > 0:
+                data = np.array(self.scg_data[i])
+                line.set_data(times, data)
+                
+                y_min, y_max = data.min(), data.max()
+                margin = (y_max - y_min) * 0.1 if y_max != y_min else 1.0
+                ax.set_ylim(y_min - margin, y_max + margin)
+                
+            ax.set_xlim(times[0], times[-1] + 0.1)
+            text.set_text(f"Score: {int(self.scores[i]*100)}")
+            
+            artists.append(line)
+            artists.append(text)
+            
+        return artists
+
+    def update_fig1(self, frame):
+        if self.is_paused: return self.lines[0:5] + self.score_texts[0:5] + [self.status_text]
+        
+        artists = self._update_scg_fig(0, 5)
+        
+        status_str = f"Max Bin: {self.max_bin}\nOffset: {self.offset}\nHR: {self.current_hr:.1f} bpm"
+        self.status_text.set_text(status_str)
+        artists.append(self.status_text)
+        return tuple(artists)
+
+    def update_fig2(self, frame):
+        if self.is_paused: return self.lines[5:10] + self.score_texts[5:10]
+        return tuple(self._update_scg_fig(5, 10))
+
+    def update_fig3(self, frame):
+        if self.is_paused: return [self.hr_line, self.hr_text]
+        
+        if len(self.hr_history) > 0:
+            self.hr_line.set_data(range(len(self.hr_history)), list(self.hr_history))
+            self.hr_ax.set_xlim(0, max(len(self.hr_history), self.hr_history_size))
+        
+        self.hr_text.set_text(f"HR: {self.current_hr:.1f} bpm ({self.hr_status})")
+        color = "green" if 60 <= self.current_hr <= 100 else "red"
+        self.hr_text.set_color(color)
+        
+        return [self.hr_line, self.hr_text]
+
+    def start_animations(self):
+        anim1 = FuncAnimation(self.figs[0], self.update_fig1, interval=50, blit=True, cache_frame_data=False)
+        anim2 = FuncAnimation(self.figs[1], self.update_fig2, interval=50, blit=True, cache_frame_data=False)
+        anim3 = FuncAnimation(self.figs[2], self.update_fig3, interval=100, blit=True, cache_frame_data=False)
+        return [anim1, anim2, anim3]
+
+def main():
+    print("启动综合可视化 (SCG + Heart Rate)...")
+    
+    # 队列
+    radar_queue = Queue()
+    scg_input_queue = Queue()
+    hr_input_queue = Queue()
+    
+    # 结果队列
+    scg_output_queue = Queue()
+    # HR线程直接通过回调更新? 或者也用队列
+    # MMWHeartRateThread 支持 callback. 
+    # 为了统一，我们可以用 callback 把结果放入一个公共结果队列，或者直接更新 visualizer.
+    # 但 visualizer 在主线程，callback 在子线程，直接更新 visualizer 数据结构（deques）是线程安全的吗？
+    # deque 是线程安全的 (GIL)。
+    # 但为了架构清晰，我们用 Queue 传递结果到主线程 loop.
+    viz_queue = Queue()
+    
+    def scg_callback(res): # 不适用，MultiBinGradeProcessor 把结果放入 output_queue
+        pass
+        
+    def hr_callback(res):
+        res["type"] = "hr"
+        viz_queue.put(res)
+
+    # 线程
+    dispatcher = DataDispatcher(radar_queue, [scg_input_queue, hr_input_queue])
+    
+    radar_thread = MMWRadarThread(
+        output_queue=radar_queue,
+        serial_port="COM7", 
+        serial_baudrate=921600
+    )
+    
+    scg_processor = MultiBinGradeProcessor(
+        input_queue=scg_input_queue,
+        output_queue=scg_output_queue
+    )
+    
+    hr_processor = MMWHeartRateThread(
+        input_queue=hr_input_queue,
+        callback=hr_callback
+    )
+    
+    # 可视化
+    viz = CombinedVisualizer()
+    
+    # 启动
+    radar_thread.start()
+    dispatcher.start()
+    scg_processor.start()
+    hr_processor.start()
+    
+    # 动画更新包装
+    # 我们需要在主线程消费 scg_output_queue 和 viz_queue (HR结果)
+    # 可以在 animation update 函数中消费
+    
+    def consume_queues():
+        # 消费 SCG
+        while not scg_output_queue.empty():
+            try:
+                res = scg_output_queue.get_nowait()
+                viz.update_scg(res)
+            except Empty:
+                break
+        
+        # 消费 HR
+        while not viz_queue.empty():
+            try:
+                res = viz_queue.get_nowait()
+                viz.update_hr(res)
+            except Empty:
+                break
+                
+    original_update1 = viz.update_fig1
+    def wrapped_update1(frame):
+        consume_queues()
+        return original_update1(frame)
+    viz.update_fig1 = wrapped_update1
+    
+    anims = viz.start_animations()
+    
+    try:
+        plt.show()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        print("Stopping...")
+        dispatcher.stop()
+        scg_processor.stop()
+        hr_processor.stop()
+        radar_thread.stop()
+        # join...
 
 if __name__ == "__main__":
-    # 创建并启动可视化器
-    visualizer = HeartRateVisualizer(
-        waveform_window_size=1000,  # 心率波形窗口
-        hr_history_size=20,  # 心率历史记录
-    )
-
-    # 启动（需要根据实际情况修改串口名称）
-    visualizer.start(
-        serial_port="COM7",
-        serial_baudrate=921600,
-    )
+    plt.rcParams["font.sans-serif"] = ["SimHei", "Microsoft YaHei", "Arial"]
+    plt.rcParams["axes.unicode_minus"] = False
+    main()

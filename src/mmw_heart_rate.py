@@ -13,6 +13,8 @@ from typing import Any
 import numpy as np
 from scipy.signal import butter, filtfilt
 
+from src.heart_rate_processor import calculate_heart_rate
+
 
 class MMWHeartRateThread(threading.Thread):
     """毫米波心率信号处理线程（消费者）.
@@ -150,126 +152,61 @@ class MMWHeartRateThread(threading.Thread):
                     self._calculate_heart_rate()
 
     def _calculate_heart_rate(self) -> None:
-        """基于当前1000帧窗口计算心率和HRV指标."""
+        """基于当前1000帧窗口计算心率和HRV指标 (使用 heart_rate_processor.py 的老算法)."""
         if len(self._frame_buffer) < self.MIN_BUFFER_SIZE:
             return
 
         try:
             # 转换为numpy数组: (1000, 8, 10)
             fft_data = np.array(self._frame_buffer)
-
-            # 1. 找能量最大的bin（只在通道0中）
-            max_idx = 0
-            max_val = 0
-            for i in range(self._bins_per_channel):
-                tmp_val = np.sum(np.abs(fft_data[:, 0, i]))
-                if max_val < tmp_val:
-                    max_idx = i
-                    max_val = tmp_val
-            self._current_max_bin = max_idx
-
-            # 2. 提取相位并展开
-            phase = np.unwrap(np.angle(fft_data[:, 0, max_idx]))
-
-            # 3. 计算二阶差分（7点加权）
-            h = self.TIME_STEP
-            length = phase.shape[0] - 6
-            diff_data = np.zeros_like(phase)
-            res_data = (
-                phase[3:length+3] * 4.0 +
-                (phase[4:length+4] + phase[2:length+2]) -
-                2.0 * (phase[5:length+5] + phase[1:length+1]) -
-                (phase[6:length+6] + phase[:length])
-            ) / (16.0 * h * h)
-            diff_data[3:-3] = res_data
-
-            # 4. 过滤异常值
-            st_idx = np.abs(diff_data) > self.OUTLIER_THRESHOLD
-            diff_data[st_idx] = 0
-
-            # 5. 预处理：归一化
-            if not np.any(diff_data):
-                return
             
-            max_val = max(abs(x) for x in diff_data)
-            if max_val == 0:
-                return
-            norm_data = diff_data / max_val
-
-            # 6. 带通滤波 20-40Hz
-            try:
-                b, a = butter(  # type: ignore
-                    self.FILTER_ORDER,
-                    [self.LOWCUT / (self.SAMPLING_RATE / 2), self.HIGHCUT / (self.SAMPLING_RATE / 2)],
-                    btype='band',
-                    analog=False
-                )
-                filtered_data = filtfilt(b, a, norm_data)
-                
-                # 再次归一化滤波后的数据
-                max_val = max(abs(x) for x in filtered_data)
-                if max_val == 0:
-                    return
-                filtered_data = filtered_data / max_val
-            except Exception as e:
-                print(f"滤波失败: {e}")
+            # 调用老算法逻辑
+            result = calculate_heart_rate(fft_data)
+            
+            if result["status"] == "failed":
                 return
 
-            # 7. 检测峰值（使用改进的多步骤算法）
-            peaks = self._detect_peaks_multistep(filtered_data)
-
-            if len(peaks) < 2:
-                return  # 至少需要2个峰值
-
-            # 8. 计算RR间期（峰值间隔，以秒为单位）
-            peaks_intervals = np.diff(peaks)
-            # 过滤异常间隔（对应心率40-180 bpm）
-            filtered_intervals = peaks_intervals[
-                (peaks_intervals >= 100) & (peaks_intervals <= 240)
-            ]
+            # 解析结果
+            final_heart_rate = result["heart_rate"]
+            mean_rr = result["mean_RR_interval"]
+            sum_square_rr = result["sum_square_RR"]
+            ibi_list = result.get("ibi_list", []) # 原始 IBI 列表 (ms)
+            filtered_waveform = result.get("filtered_waveform", [])
+            if isinstance(filtered_waveform, np.ndarray):
+                filtered_waveform = filtered_waveform.tolist()
             
-            if len(filtered_intervals) == 0:
-                return
-
-            rr_intervals = filtered_intervals * self.TIME_STEP  # 转换为秒
-
-            # 9. 计算心率
-            mean_rr = np.mean(rr_intervals)
-            heart_rate = 60.0 / mean_rr  # bpm
-
-            # 10. 计算HRV指标
-            N = len(rr_intervals)
-            sdnn = float(np.std(rr_intervals) * 1000)  # ms
+            # 计算额外的 HRV 指标
+            sdnn = 0.0
+            rmssd = 0.0
+            pnn50 = 0.0
+            N = len(ibi_list)
+            rr_intervals = np.array(ibi_list) / 1000.0 # 秒
             
-            # RMSSD
-            rr_diff = np.diff(rr_intervals)
-            rmssd = float(np.sqrt(np.mean(rr_diff ** 2)) * 1000) if len(rr_diff) > 0 else 0.0
-            
-            # pNN50
-            nn50_count = np.sum(np.abs(rr_diff) > 0.05)
-            pnn50 = float((nn50_count / len(rr_diff)) * 100) if len(rr_diff) > 0 else 0.0
+            if N > 1:
+                sdnn = float(np.std(rr_intervals) * 1000)
+                rr_diff = np.diff(rr_intervals)
+                rmssd = float(np.sqrt(np.mean(rr_diff ** 2)) * 1000)
+                nn50_count = np.sum(np.abs(rr_diff) > 0.05)
+                pnn50 = float((nn50_count / len(rr_diff)) * 100)
 
-            # IBI数据（毫秒）
-            ibi_list = (rr_intervals * 1000).tolist()
-            ibi_string = ','.join([str(int(ibi)) for ibi in ibi_list])
-
-            # 11. 构造输出结果
+            # 构造输出结果
             hr_dict = {
                 "status": "succeeded",
-                "heart_rate": float(heart_rate),
+                "heart_rate": float(final_heart_rate),
                 "rr_intervals": rr_intervals.tolist(),
                 "hrv_sdnn": sdnn,
                 "hrv_rmssd": rmssd,
                 "hrv_pnn50": pnn50,
                 "num_rr_intervals": N,
                 "mean_rr_interval": float(mean_rr),
-                "sum_square_rr": float(np.sum(rr_intervals ** 2)),
-                "peak_count": len(peaks),
-                "ibi_data": ibi_string,
-                "filtered_waveform": filtered_data[-200:].tolist(),  # 最后200个点用于可视化
-                "max_bin": self._current_max_bin,
+                "sum_square_rr": float(sum_square_rr),
+                "peak_count": N, 
+                "ibi_data": result["ibi_data"],
+                "filtered_waveform": filtered_waveform,  
+                "max_bin": result.get("max_bin", 0), 
                 "frame_idx": self._completed_frames,
                 "timestamp": self._completed_frames * self.TIME_STEP,
+                "method": "old_algorithm"
             }
             
             # 输出到队列
@@ -286,6 +223,41 @@ class MMWHeartRateThread(threading.Thread):
             print(f"计算心率时出错: {e}")
             import traceback
             traceback.print_exc()
+
+    def _calculate_autocorrelation(self, signal: np.ndarray) -> np.ndarray | None:
+        """计算信号的自相关 (参考 heart_rate_old.py)."""
+        try:
+            n = len(signal)
+            if n == 0:
+                return None
+            mean = np.mean(signal)
+            var = np.var(signal)
+            if var == 0:
+                return None
+            # 使用numpy的correlate计算自相关
+            autocorr = np.correlate(signal - mean, signal - mean, mode='full') / (var * n)
+            # 取后半部分 (lag >= 0)
+            return autocorr[n-1:]
+        except Exception as e:
+            print(f"自相关计算出错: {e}")
+            return None
+
+    def _find_autocorrelation_peak(self, autocorr_result: np.ndarray) -> tuple[int, float] | None:
+        """在自相关结果中寻找峰值 (Lag 90-240)."""
+        if autocorr_result is None or len(autocorr_result) < 241:
+            return None
+            
+        start, end = 90, 240
+        # 截取感兴趣的区间 (对应心率 50-133 BPM)
+        sub_range = autocorr_result[start:end + 1]
+        
+        if len(sub_range) == 0:
+            return None
+            
+        max_value = np.max(sub_range)
+        max_index = np.argmax(sub_range) + start
+        
+        return max_index, max_value
 
     def _detect_peaks_multistep(self, filtered_data: np.ndarray) -> np.ndarray:
         """多步骤峰值检测算法（基于 heart_rate_old.py 的 detect_peaks_2）.
