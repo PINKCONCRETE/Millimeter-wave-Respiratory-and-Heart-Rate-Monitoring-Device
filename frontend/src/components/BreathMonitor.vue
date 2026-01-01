@@ -15,29 +15,29 @@
           </div>
           <h3 class="section-title">呼吸监测</h3>
         </div>
-        <div class="status-section">
-          <!-- 呼吸暂停状态 -->
-          <div class="status-item" v-if="isInBed && breathWarningId === 21">
+        <!-- <div class="status-section">
+          呼吸暂停状态
+          <div class="status-item" v-if="isInBed && breathWarningId === 212">
               <img src="/breath_imgs/breath_hold.svg" alt="呼吸暂停" class="status-icon status-active" />
               <h3 class="status-text-active">呼吸暂停</h3>
           </div>
 
-          <!-- 通气阻塞状态 -->
-          <div class="status-item" v-if="isInBed && breathWarningId === 22">
+          通气阻塞状态
+          <div class="status-item" v-if="isInBed && breathWarningId === 222">
               <img src="/breath_imgs/lung.svg" alt="通气阻塞" class="status-icon status-active" />
               <h3 class="status-text-active">通气阻塞</h3>
           </div>
 
-          <!-- 正常状态 -->
-          <div class="status-item" v-if="isInBed && breathWarningId === 0">
+          正常状态
+          <div class="status-item" v-if="isInBed">
               <h3 class="status-text-normal">呼吸正常</h3>
           </div>
 
-          <!-- 离床状态 -->
+          离床状态
           <div class="status-item" v-if="!isInBed">
             <h3 class="status-text-out-of-bed">已离床</h3>
           </div>
-        </div>
+        </div> -->
       </div>
 
       <!-- 图表区 -->
