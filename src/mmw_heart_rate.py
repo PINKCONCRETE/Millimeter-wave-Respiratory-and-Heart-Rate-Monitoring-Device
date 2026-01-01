@@ -86,6 +86,8 @@ class MMWHeartRateThread(threading.Thread):
         self._current_max_bin = 0  # 当前能量最大bin
         self._running = True
         self._start_time = None
+        self.last_heart_rate = 0
+        self.final_heart_rate = 0
 
     def run(self) -> None:
         """主循环：从队列消费数据并处理."""
@@ -164,10 +166,10 @@ class MMWHeartRateThread(threading.Thread):
             result = calculate_heart_rate(fft_data)
             
             if result["status"] == "failed":
-                return
-
-            # 解析结果
-            final_heart_rate = result["heart_rate"]
+                self.final_heart_rate = self.last_heart_rate
+            else: 
+                self.last_heart_rate = self.final_heart_rate
+                self.final_heart_rate = result["heart_rate"]
             mean_rr = result["mean_RR_interval"]
             sum_square_rr = result["sum_square_RR"]
             ibi_list = result.get("ibi_list", []) # 原始 IBI 列表 (ms)
@@ -192,7 +194,7 @@ class MMWHeartRateThread(threading.Thread):
             # 构造输出结果
             hr_dict = {
                 "status": "succeeded",
-                "heart_rate": float(final_heart_rate),
+                "heart_rate": float(self.final_heart_rate),
                 "rr_intervals": rr_intervals.tolist(),
                 "hrv_sdnn": sdnn,
                 "hrv_rmssd": rmssd,
