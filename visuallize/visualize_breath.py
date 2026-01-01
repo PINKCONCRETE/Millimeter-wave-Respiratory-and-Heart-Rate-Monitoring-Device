@@ -19,8 +19,8 @@ from src.mmw_breath import MMWBreathThread  # noqa: E402
 from src.mmw_rader import MMWRadarThread  # noqa: E402
 
 # 处理中文和负号显示问题
-plt.rcParams["font.sans-serif"] = ["SimHei"]  # 中文字体
-plt.rcParams["axes.unicode_minus"] = False  # 负号显示
+# plt.rcParams["font.sans-serif"] = ["SimHei"]  # 中文字体
+# plt.rcParams["axes.unicode_minus"] = False  # 负号显示
 
 class BreathVisualizer:
     """毫米波呼吸数据实时可视化器.
@@ -172,7 +172,7 @@ def main() -> None:
     print("=" * 60)
 
     # 配置参数
-    serial_port = "COM7"
+    serial_port = "/dev/ttyACM1"
     baudrate = 921600
     channel_num = 8  # 8个通道
     bins_per_channel = 10  # 每个通道的频率bin数量

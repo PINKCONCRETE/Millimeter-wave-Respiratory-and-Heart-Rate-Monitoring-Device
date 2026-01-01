@@ -288,9 +288,9 @@ class UnifiedDatabaseWriter(threading.Thread):
                 heart_rate_int = last_hr + 5 * (delta_hr / abs(delta_hr))
         # last_hr = 
 
-        # if(not self._human_status):
+        if(not self._human_status):
             # 如果无人状态，跳过心率写入
-            # heart_rate_int = 0
+            heart_rate_int = 0
         # 写入HeartData历史表
         heart_data = HeartData(
             uid=self._uid,
