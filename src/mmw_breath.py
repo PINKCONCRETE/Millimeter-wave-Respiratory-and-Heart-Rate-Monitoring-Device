@@ -154,14 +154,14 @@ class MMWBreathProcess(multiprocessing.Process):
         # 2. Bin选择 (能量最大)
         # 每100帧更新一次目标Bin
         if self._completed_frames % 100 == 0:
-            energies = np.sum(np.abs(data[:, :, :]), axis=(0, 1))
+            energies = np.sum(np.abs(data[:, 0, :]), axis=0)
             self._current_target_bin = np.argmax(energies)
             
         target_bin = self._current_target_bin if 0 <= self._current_target_bin < self._bins_per_channel else 0
         
         # 3. 提取相位
-        # 聚合通道 (简单的求和)
-        complex_signal = np.sum(data[:, :, target_bin], axis=1)
+        # 使用通道0 (Old algorithm behavior)
+        complex_signal = data[:, 0, target_bin]
         raw_phase = np.angle(complex_signal)
         
         # 4. 高级信号处理 (使用移植的算法)
@@ -243,10 +243,15 @@ class MMWBreathProcess(multiprocessing.Process):
         if window_size < 2:
             return signal_data
             
+        pad_width = window_size // 2
+        
+        # 反射填充以避免边缘效应
+        padded_signal = np.pad(signal_data, (pad_width, pad_width), mode="reflect")
+
         smoothed = np.convolve(
-            signal_data, np.ones(window_size) / window_size, mode="same"
+            padded_signal, np.ones(window_size) / window_size, mode="same"
         )
-        return smoothed
+        return smoothed[pad_width:-pad_width]
 
     def _find_peaks_valleys(self, data: np.ndarray, time_valid: float = 0.3) -> tuple[np.ndarray, np.ndarray]:
         """在信号中寻找峰值和谷值."""
