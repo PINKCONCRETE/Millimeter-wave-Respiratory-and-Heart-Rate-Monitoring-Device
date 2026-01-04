@@ -12,7 +12,7 @@ if platform.system() == 'Windows':
     PIPE_NAME = os.getenv('MMW_PIPE_NAME', r'\\.\pipe\mmw_monitor_pipe')
 else:
     # Linux/Mac defaults
-    SERIAL_PORT = os.getenv('MMW_SERIAL_PORT', '/dev/ttyUSB0')
+    SERIAL_PORT = os.getenv('MMW_SERIAL_PORT', '/dev/ttyACM1')
     # Unix Domain Socket for IPC
     PIPE_NAME = os.getenv('MMW_PIPE_NAME', '/tmp/mmw_monitor.sock')
 
