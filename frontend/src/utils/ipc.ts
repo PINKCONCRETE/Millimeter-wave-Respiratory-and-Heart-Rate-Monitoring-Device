@@ -31,7 +31,10 @@ export interface RealtimeAnalysisData {
 export interface HeartRateData {
   type: 'heart_rate_data';
   heart_rate: number;
-  hrv: number;
+  hrv_sdnn: number;
+  hrv_rmssd: number;
+  hrv_pnn50: number;
+  mean_rr_interval: number;
   stress_index: number;
   stress_level: string;
 }

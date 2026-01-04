@@ -120,19 +120,31 @@ const updateChart = () => {
     });
 };
 
+const formatTimestamp = (date: Date): string => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    const seconds = String(date.getSeconds()).padStart(2, '0');
+    return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+};
+
 // IPC Listeners
 setupIPCListeners({
     onHeartRate: (data: HeartRateData) => {
-        currentHRV.value = data.hrv;
-        if (data.hrv > 0) {
-            lastValidHRV.value = data.hrv;
+        // Use SDNN as the primary HRV metric for the chart
+        const hrvValue = data.hrv_sdnn;
+        currentHRV.value = hrvValue;
+        if (hrvValue > 0) {
+            lastValidHRV.value = hrvValue;
         }
         stressIndex.value = data.stress_index;
         
         const now = new Date();
-        const timestamp = now.toISOString(); 
+        const timestamp = formatTimestamp(now); 
         
-        const value = hasHuman.value ? data.hrv : null;
+        const value = hasHuman.value ? hrvValue : null;
         
         dataBuffer.push({
             name: timestamp,

@@ -34,11 +34,9 @@ const bufferSize = ref(0);
 const status = ref('Waiting...');
 const currentBin = ref(0);
 const currentScore = ref(0.0);
-const realtimeHR = ref(0);
 const isPremature = ref(false);
 
 const statsList = computed(() => [
-    { label: 'RT HR', value: `${Math.round(realtimeHR.value)} bpm`, type: isPremature.value ? 'warning' as const : 'success' as const },
     { label: 'Premature', value: isPremature.value ? 'Yes' : 'No', type: isPremature.value ? 'danger' as const : 'info' as const },
     { label: 'Human', value: props.isInBed ? 'Yes' : 'No', type: props.isInBed ? 'success' as const : 'info' as const },
     { label: 'FPS', value: fps.value, type: 'success' as const }
@@ -202,7 +200,6 @@ setupIPCListeners({
         if (data.score !== undefined) currentScore.value = data.score;
     },
     onRealtimeAnalysis: (data: RealtimeAnalysisData) => {
-        if (data.realtime_hr !== undefined && !isNaN(data.realtime_hr)) realtimeHR.value = data.realtime_hr;
         if (data.realtime_premature !== undefined) isPremature.value = data.realtime_premature;
     },
     onFPS: (data: FPSData) => {
