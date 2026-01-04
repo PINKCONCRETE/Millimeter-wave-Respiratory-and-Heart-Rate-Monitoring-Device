@@ -11,7 +11,7 @@ from typing import Any
 
 import numpy as np
 import pywt
-from scipy.signal import butter, filtfilt, find_peaks, correlate, lfilter, lfilter_zi
+from scipy.signal import butter, filtfilt, find_peaks, correlate, lfilter, lfilter_zi, savgol_filter
 
 # Parameters adapted for 200Hz sampling rate
 PARAMS_OPTIMIZED = {
@@ -130,7 +130,11 @@ class SCGGradeProcess(multiprocessing.Process):
     MAX_BUFFER_SIZE = int(SAMPLING_RATE * WINDOW_SECONDS) # 5秒窗口
     OUTLIER_THRESHOLD = 1500
     TIME_STEP = 0.005
-    DIFFERENTIAL_WEIGHT = 16.0  # 差分公式分母权重
+    # Savitzky-Golay 滤波器参数
+    # 增加点数可以提高抗噪性，但过大会平滑掉AO/AC峰细节
+    # 31点 @ 200Hz = 155ms，适合保留主峰特征同时滤除高频噪声
+    SAVGOL_WINDOW = 7 
+    SAVGOL_POLYORDER = 3
 
     def __init__(
         self,
@@ -280,26 +284,34 @@ class SCGGradeProcess(multiprocessing.Process):
         计算相位二阶差分 (加速度) 并进行小波去噪 + 匹配滤波.
         
         流程:
-        1. Phase -> Acceleration (2nd Derivative)
+        1. Phase -> Acceleration (Savitzky-Golay Differentiator)
+           - 使用 Savitzky-Golay 滤波器替代简单的7点差分
+           - 优势: 在计算微分的同时进行多项式平滑，利用更多点数(如31点)有效抗噪
         2. Wavelet Denoising (1-40Hz Bandpass)
         3. Matched Filtering (AO/AC Template)
         """
         unwrapped_phase = np.unwrap(phase_data)
         
-        # 1. 计算加速度 (Acceleration) - 使用双微分滤波器逻辑或简单的二阶差分
-        # 这里使用简单的二阶差分以保持高效，且与differentiator_filter_double类似效果
-        # np.diff(phase) -> Velocity
-        # np.diff(velocity) -> Acceleration
-        # padding以保持长度
-        velocity = np.diff(unwrapped_phase, prepend=unwrapped_phase[0])
-        acceleration = np.diff(velocity, prepend=velocity[0])
-        
+        # 1. 计算加速度 (Acceleration) - 使用 Savitzky-Golay 微分器
+        # deriv=2 表示计算二阶导数(加速度)
+        # delta=self.TIME_STEP 用于归一化时间单位
+        try:
+            acceleration = savgol_filter(
+                unwrapped_phase, 
+                window_length=self.SAVGOL_WINDOW, 
+                polyorder=self.SAVGOL_POLYORDER, 
+                deriv=2, 
+                delta=self.TIME_STEP,
+                mode='interp' # 边界处理：插值
+            )
+        except Exception as e:
+            print(f"Savitzky-Golay failed: {e}, falling back to simple diff")
+            # Fallback (simple 2nd diff) if signal too short
+            acceleration = np.diff(unwrapped_phase, n=2, prepend=[0,0]) / (self.TIME_STEP**2)
+
         raw_scg = acceleration
         
         # 2. 小波分解 (Wavelet Decomposition)
-        # fs = 200Hz. Nyquist = 100Hz.
-        # Level 8 decomposition using 'sym8'
-        
         w_family = 'sym8'
         try:
             max_level = pywt.dwt_max_level(len(raw_scg), pywt.Wavelet(w_family).dec_len)
@@ -310,31 +322,16 @@ class SCGGradeProcess(multiprocessing.Process):
                 
             coeffs = pywt.wavedec(raw_scg, w_family, level=level)
             
-            # 频段重构 (Reconstruction) - 针对加速度信号优化
-            # 目标频段: 1Hz - 40Hz
-            
-            # Level 8 (fs=200):
-            # A8: 0 - 0.39 Hz (Respiration Baseline) -> Remove
+            # 频段重构: 1Hz - 50Hz (保留 D2-D7)
+            # A8 (0-0.39Hz), D8 (0.39-0.78Hz) -> 去除呼吸
             coeffs[0] = np.zeros_like(coeffs[0])
+            if level >= 8: coeffs[1] = np.zeros_like(coeffs[1])
             
-            # D8: 0.39 - 0.78 Hz (Low Freq Noise) -> Remove
-            if level >= 8:
-                 coeffs[1] = np.zeros_like(coeffs[1])
-            
-            # D7: 0.78 - 1.56 Hz -> Keep (Heart Rate Fundamental)
-            # D6: 1.56 - 3.12 Hz -> Keep
-            # D5: 3.12 - 6.25 Hz -> Keep
-            # D4: 6.25 - 12.5 Hz -> Keep (AC Fundamental)
-            # D3: 12.5 - 25.0 Hz -> Keep (AO Fundamental)
-            # D2: 25.0 - 50.0 Hz -> Keep (AO Harmonics / Sharp peaks)
-            # D1: 50.0 - 100 Hz -> Remove (High Freq Muscle Noise)
-            
+            # D1 (50-100Hz) -> 去除高频肌电
             if len(coeffs) >= 1:
-                coeffs[-1] = np.zeros_like(coeffs[-1]) # D1 (50-100Hz)
+                coeffs[-1] = np.zeros_like(coeffs[-1])
             
-            # Reconstruct
             clean_scg = pywt.waverec(coeffs, w_family)
-            
             if len(clean_scg) > len(raw_scg):
                 clean_scg = clean_scg[:len(raw_scg)]
             
@@ -346,36 +343,6 @@ class SCGGradeProcess(multiprocessing.Process):
         except Exception as e:
             print(f"Advanced Denoising Failed: {e}")
             return raw_scg
-        计算整个波形的7点加权二阶导数.
-
-        使用7点中心差分公式计算二阶导数：
-        f''(x) ≈ [4f(x) + f(x+1) + f(x-1) - 2f(x+2) - 2f(x-2) - f(x+3) - f(x-3)] / (16h²)
-
-        对于边界点（前3个和后3个），保持为0。
-        """
-        unwrapped_phase = np.unwrap(phase_data)
-        n = unwrapped_phase.shape[0]
-        h_squared = self.TIME_STEP ** 2
-
-        # 初始化结果数组为0
-        result = np.zeros_like(unwrapped_phase)
-
-        # 计算可以应用7点公式的范围（排除边界3个点）
-        length = n - 6
-        
-        if length <= 0:
-            return result
-
-        # 使用向量化计算中间部分的二阶导数
-        # 中心点从索引3到n-4
-        result[3:length+3] = (
-            unwrapped_phase[3:length+3] * 4.0 +
-            (unwrapped_phase[4:length+4] + unwrapped_phase[2:length+2]) -
-            2.0 * (unwrapped_phase[5:length+5] + unwrapped_phase[1:length+1]) -
-            (unwrapped_phase[6:length+6] + unwrapped_phase[:length])
-        ) / (self.DIFFERENTIAL_WEIGHT * h_squared)
-
-        return result
 
     def _compute_score_and_fft(self, signal: np.ndarray) -> tuple[float, np.ndarray, int]:
         """计算信号评分与FFT."""
@@ -467,10 +434,10 @@ class SCGGradeProcess(multiprocessing.Process):
         outlier_idx = np.abs(scg_waveform) > self.OUTLIER_THRESHOLD
         scg_waveform[outlier_idx] = 0.0
         
-        # 由于使用7点差分，最右侧3个点是无效的(为0)
-        # 因此我们需要取倒数第4个点作为最新的有效数据
-        if len(scg_waveform) >= 4:
-            latest_value = scg_waveform[-4] 
+        # 由于使用 Savitzky-Golay，边界处理较好，不需要特别丢弃最后几个点
+        # 但为了保险，仍取最新的有效数据（倒数第1个即可，或者倒数第2个）
+        if len(scg_waveform) >= 1:
+            latest_value = scg_waveform[-1] 
         else:
             latest_value = 0.0
             
