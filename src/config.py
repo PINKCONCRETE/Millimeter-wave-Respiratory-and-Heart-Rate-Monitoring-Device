@@ -2,15 +2,21 @@
 Configuration Constants for the Millimeter Wave Monitoring System.
 """
 import os
+import platform
 
 # Serial Port Configuration
-# Default serial port for the millimeter wave radar
-SERIAL_PORT = os.getenv('MMW_SERIAL_PORT', 'COM7')
-SERIAL_BAUDRATE = int(os.getenv('MMW_SERIAL_BAUDRATE', 921600))
+if platform.system() == 'Windows':
+    # Default serial port for the millimeter wave radar
+    SERIAL_PORT = os.getenv('MMW_SERIAL_PORT', 'COM7')
+    # IPC Configuration (Named Pipe for Electron)
+    PIPE_NAME = os.getenv('MMW_PIPE_NAME', r'\\.\pipe\mmw_monitor_pipe')
+else:
+    # Linux/Mac defaults
+    SERIAL_PORT = os.getenv('MMW_SERIAL_PORT', '/dev/ttyUSB0')
+    # Unix Domain Socket for IPC
+    PIPE_NAME = os.getenv('MMW_PIPE_NAME', '/tmp/mmw_monitor.sock')
 
-# IPC Configuration (Named Pipe for Electron)
-# This name must match the one used in the Electron main process
-PIPE_NAME = os.getenv('MMW_PIPE_NAME', r'\\.\pipe\mmw_monitor_pipe')
+SERIAL_BAUDRATE = int(os.getenv('MMW_SERIAL_BAUDRATE', 921600))
 
 # Database Configuration
 DATABASE_FILENAME = 'mmw_monitor.db'

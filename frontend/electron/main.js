@@ -1,9 +1,12 @@
 const { app, BrowserWindow } = require('electron')
 const path = require('path')
 const net = require('net')
+const fs = require('fs')
 
-// IPC Pipe Name for Windows
-const PIPE_NAME = '\\\\.\\pipe\\mmw_monitor_pipe'
+// IPC Pipe Name / Socket Path
+const PIPE_NAME = process.platform === 'win32' 
+  ? '\\\\.\\pipe\\mmw_monitor_pipe' 
+  : '/tmp/mmw_monitor.sock'
 
 let mainWindow
 let server
@@ -62,6 +65,14 @@ function createWindow () {
         console.error('Pipe error:', err)
     })
   })
+
+  if (process.platform !== 'win32' && fs.existsSync(PIPE_NAME)) {
+    try {
+      fs.unlinkSync(PIPE_NAME)
+    } catch (e) {
+      console.error('Failed to unlink socket:', e)
+    }
+  }
 
   server.listen(PIPE_NAME, () => {
     console.log(`Named Pipe Server listening on ${PIPE_NAME}`)
