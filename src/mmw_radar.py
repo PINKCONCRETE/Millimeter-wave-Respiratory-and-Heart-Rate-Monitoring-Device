@@ -221,7 +221,7 @@ class MMWRadarProcess(multiprocessing.Process):
             now = time.time()
             if now - self._last_fps_time >= 1.0:
                 fps = (self._received_frames - self._last_received_frames) / (now - self._last_fps_time)
-                print(f"[Radar] FPS: {fps:.1f}")
+                # print(f"[Radar] FPS: {fps:.1f}")
                 
                 self._last_received_frames = self._received_frames
                 self._last_fps_time = now

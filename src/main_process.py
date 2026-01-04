@@ -15,7 +15,7 @@ project_root = Path(__file__).parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
-from src.mmw_rader import MMWRadarProcess
+from src.mmw_radar import MMWRadarProcess
 from src.mmw_scg_grade import SCGGradeProcess
 from src.mmw_realtime_analysis import MMWRealtimeAnalysisProcess
 from src.mmw_breath import MMWBreathProcess
