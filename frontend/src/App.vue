@@ -76,7 +76,7 @@ const onDrop = (targetId: string) => {
 onMounted(() => {
     setupIPCListeners({
         onHumanCheck: (data: HumanCheckData) => {
-            if (data.is_in_bed !== undefined) isInBed.value = data.is_in_bed;
+            if (data.has_human !== undefined) isInBed.value = data.has_human;
         }
     });
 });

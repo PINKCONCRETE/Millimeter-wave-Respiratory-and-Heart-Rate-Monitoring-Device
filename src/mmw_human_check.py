@@ -113,15 +113,15 @@ class HumanCheckByPeak(HumanCheckBase):
 
     BINS_PER_CHANNEL = 10
     PEAK_THRESHOLD = [
-        52900.0, 72830.0, 80000.0, 78500.0, 60300.0,  # 0-4
-        48400.0, 46000.0, 44000.0, 42000.0, 41000.0,  # 5-9
-        39000.0, 37000.0, 35000.0, 33000.0, 31000.0,  # 10-14
-        30000.0, 29000.0, 28000.0, 27000.0, 26000.0,  # 15-19
-        25000.0, 24000.0, 23000.0, 22000.0, 21000.0,  # 20-24
-        20000.0, 19000.0, 18000.0, 17000.0, 16000.0,  # 25-29
-        15000.0, 14000.0, 13000.0, 12000.0, 11000.0,  # 30-34
-        11000.0, 11000.0, 11000.0, 10000.0, 10000.0,  # 35-39
-        10000.0, 10000.0, 10000.0, 10000.0, 10000.0,  # 40-44
+        79350.0, 109245.0, 120000.0, 117750.0, 90450.0,  # 0-4
+        72600.0, 69000.0, 66000.0, 63000.0, 61500.0,  # 5-9
+        58500.0, 55500.0, 52500.0, 49500.0, 46500.0,  # 10-14
+        45000.0, 43500.0, 42000.0, 40500.0, 39000.0,  # 15-19
+        37500.0, 36000.0, 34500.0, 33000.0, 31500.0,  # 20-24
+        30000.0, 28500.0, 27000.0, 25500.0, 24000.0,  # 25-29
+        22500.0, 21000.0, 19500.0, 18000.0, 16500.0,  # 30-34
+        16500.0, 16500.0, 16500.0, 15000.0, 15000.0,  # 35-39
+        15000.0, 15000.0, 15000.0, 15000.0, 15000.0,  # 40-44
     ]
 
     def __init__(self, accumulate_count: int = 100, threshold_count: int = 80) -> None:
@@ -175,7 +175,7 @@ class HumanCheck:
         self.check_by_smallwave = HumanCheckByWave(
             accumulate_frame_count=200,
             tollerence_frame_count=30,
-            tollerence=0.02,
+            tollerence=0.05,
         )
         self.check_by_bigwave = HumanCheckByWave(
             accumulate_frame_count=200,
@@ -204,7 +204,9 @@ class HumanCheck:
             self._has_human = True
         else:
             self._has_human = False
-
+            
+        # Debug printing every 100 calls or so (not ideal here, but good for now)
+        # We can't easily count here without self state.
         return self._has_human
 
 
@@ -297,6 +299,13 @@ class MMWHumanCheckProcess(multiprocessing.Process):
             energies = np.sum(np.abs(self._current_frame_build), axis=0).tolist()
             has_human = self._human_checker.do_human_check(energies, self._current_offset)
             
+            # Debug log every 200 frames (approx 10s at 20Hz)
+            if self._completed_frames % 200 == 0:
+                print(f"[HumanCheck] Status: {'Normal' if has_human else 'Away'} | "
+                      f"S-Wave: {self._human_checker.check_by_smallwave.has_human()} | "
+                      f"B-Wave: {self._human_checker.check_by_bigwave.has_human()} | "
+                      f"Peak: {self._human_checker.check_by_peak.has_human()}")
+
             self._has_human = has_human
             self._detection_history.append(has_human)
             
