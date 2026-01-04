@@ -11,7 +11,7 @@ from typing import Any
 
 import numpy as np
 import pywt
-from scipy.signal import butter, filtfilt, find_peaks, correlate
+from scipy.signal import butter, filtfilt, find_peaks, correlate, lfilter, lfilter_zi
 
 # Parameters adapted for 200Hz sampling rate
 PARAMS_OPTIMIZED = {
@@ -120,13 +120,14 @@ class SCGGradeProcess(multiprocessing.Process):
     
     # 滤波参数
     SAMPLING_RATE = 200
+    WINDOW_SECONDS = 5 # 窗口长度（秒）
     LOWCUT = 20
     HIGHCUT = 40
     FILTER_ORDER = 4
     
     # 缓冲区参数
-    MIN_BUFFER_SIZE = 200 # 至少需要1秒数据
-    MAX_BUFFER_SIZE = 1000 # 5秒窗口
+    MIN_BUFFER_SIZE = int(SAMPLING_RATE * 1.0) # 至少需要1秒数据
+    MAX_BUFFER_SIZE = int(SAMPLING_RATE * WINDOW_SECONDS) # 5秒窗口
     OUTLIER_THRESHOLD = 1500
     TIME_STEP = 0.005
 
