@@ -55,9 +55,8 @@ class KalmanFilter:
 class UnifiedDatabaseWriter(threading.Thread):
     """统一数据库写入器 - 串行处理所有数据库写入."""
     
-    def __init__(self, uid: int = 0, database_path: str = None):
+    def __init__(self, database_path: str = None):
         super().__init__(daemon=True)
-        self._uid = uid
         self._queue = Queue(maxsize=2000)  # 统一写入队列
         self._running = False
         
@@ -110,9 +109,8 @@ class UnifiedDatabaseWriter(threading.Thread):
         
         with self._app.app_context():
             db.create_all()
-            if not UserWaveform.query.filter_by(uid=uid).first():
+            if not UserWaveform.query.first():
                 waveform = UserWaveform(
-                    uid=uid,
                     breath_waveform=json.dumps([0.0] * 200),
                     breath_ring_x=json.dumps([0.0] * 1000),
                     breath_ring_y=json.dumps([0.0] * 1000),
@@ -121,7 +119,7 @@ class UnifiedDatabaseWriter(threading.Thread):
                 )
                 db.session.add(waveform)
                 db.session.commit()
-        print(f"✓ 统一数据库写入器启动 (UID: {uid})")
+        print(f"✓ 统一数据库写入器启动")
     
     def put_scg(self, value: float):
         """添加SCG数据."""
@@ -187,7 +185,7 @@ class UnifiedDatabaseWriter(threading.Thread):
                 self._scg_waveform.pop(0)
                 self._scg_waveform.append(v)
             
-            waveform = UserWaveform.query.filter_by(uid=self._uid).first()
+            waveform = UserWaveform.query.first()
             if waveform:
                 waveform.scg_waveform = json.dumps(self._scg_waveform)
                 waveform.updated_at = datetime.now()
@@ -221,7 +219,7 @@ class UnifiedDatabaseWriter(threading.Thread):
         
         # 每100帧写入波形
         if frame_idx >= 100 and frame_idx % 100 == 0 and frame_idx != self._last_wave_frame:
-            waveform = UserWaveform.query.filter_by(uid=self._uid).first()
+            waveform = UserWaveform.query.first()
             if waveform:
                 now = datetime.now()
                 waveform.breath_waveform = json.dumps(self._breath_waveform)
@@ -234,7 +232,7 @@ class UnifiedDatabaseWriter(threading.Thread):
         
         # 每2000帧写入环
         if frame_idx >= 2000 and frame_idx % 2000 == 0 and frame_idx != self._last_ring_frame:
-            waveform = UserWaveform.query.filter_by(uid=self._uid).first()
+            waveform = UserWaveform.query.first()
             if waveform:
                 waveform.breath_ring_x = json.dumps(self._breath_ring_x)
                 waveform.breath_ring_y = json.dumps(self._breath_ring_y)
@@ -248,7 +246,6 @@ class UnifiedDatabaseWriter(threading.Thread):
         if frame_idx >= 1000 and frame_idx % 1000 == 0:
             timestamp = datetime.now()
             breath_data = BreathData(
-                uid=self._uid,
                 timestamp=timestamp,
                 respiratory_rate=float(respiratory_rate) if respiratory_rate > 0 else None,
                 is_in_bed=self._human_status,
@@ -292,7 +289,6 @@ class UnifiedDatabaseWriter(threading.Thread):
             heart_rate_int = 0
         # 写入HeartData历史表
         heart_data = HeartData(
-            uid=self._uid,
             timestamp=timestamp,
             heart_rate=float(heart_rate_int),
             is_in_bed=self._human_status,
@@ -308,7 +304,7 @@ class UnifiedDatabaseWriter(threading.Thread):
             self._heart_timestamp_buffer.pop(0)
         
         # 更新UserWaveform表的heart_waveform(在同一个事务中)
-        waveform = UserWaveform.query.filter_by(uid=self._uid).first()
+        waveform = UserWaveform.query.first()
         if waveform:
             waveform.heart_waveform = json.dumps(self._heart_waveform_buffer)
             waveform.updated_at = timestamp
@@ -344,7 +340,6 @@ class UnifiedDatabaseWriter(threading.Thread):
         
         # 写入HRVData表
         hrv_data = HRVData(
-            uid=self._uid,
             timestamp=timestamp,
             hrv_value=float(hrv_sdnn),
             time_stamps=json.dumps(time_stamps)
@@ -368,7 +363,7 @@ class UnifiedDatabaseWriter(threading.Thread):
         """停止并写入剩余数据."""
         self._running = False
         with self._app.app_context():
-            waveform = UserWaveform.query.filter_by(uid=self._uid).first()
+            waveform = UserWaveform.query.first()
             if waveform:
                 # 写入剩余SCG
                 if self._scg_buffer:
@@ -407,7 +402,7 @@ class UnifiedDatabaseWriter(threading.Thread):
 class SCGDatabaseWriter(threading.Thread):
     """SCG数据库写入器 - 适配器模式."""
     
-    def __init__(self, input_queue: Queue, uid: int = 0, database_path: str | None = None):
+    def __init__(self, input_queue: Queue, database_path: str | None = None):
         super().__init__(daemon=True)
         self._queue = input_queue
         self._writer = None
@@ -437,7 +432,7 @@ class SCGDatabaseWriter(threading.Thread):
 class BreathDatabaseWriter(threading.Thread):
     """呼吸数据库写入器 - 适配器模式."""
     
-    def __init__(self, input_queue: Queue, uid: int = 0, database_path: str | None = None):
+    def __init__(self, input_queue: Queue, database_path: str | None = None):
         super().__init__(daemon=True)
         self._queue = input_queue
         self._writer = None
@@ -466,7 +461,7 @@ class BreathDatabaseWriter(threading.Thread):
 class HeartRateDatabaseWriter(threading.Thread):
     """心率数据库写入器 - 适配器模式."""
     
-    def __init__(self, input_queue: Queue, uid: int = 0, database_path: str | None = None):
+    def __init__(self, input_queue: Queue, database_path: str | None = None):
         super().__init__(daemon=True)
         self._queue = input_queue
         self._writer = None
@@ -496,7 +491,7 @@ class HeartRateDatabaseWriter(threading.Thread):
 class HumanCheckDatabaseWriter(threading.Thread):
     """人体检测数据库写入器 - 适配器模式."""
     
-    def __init__(self, input_queue: Queue, uid: int = 0, database_path: str | None = None):
+    def __init__(self, input_queue: Queue, database_path: str | None = None):
         super().__init__(daemon=True)
         self._queue = input_queue
         self._writer = None

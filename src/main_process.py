@@ -103,8 +103,7 @@ from src.config import SERIAL_PORT, SERIAL_BAUDRATE
 class MMWProcessPipeline:
     """毫米波多进程流水线."""
     
-    def __init__(self, uid=0, serial_port=SERIAL_PORT, serial_baudrate=SERIAL_BAUDRATE, database_path=None):
-        self.uid = uid
+    def __init__(self, serial_port=SERIAL_PORT, serial_baudrate=SERIAL_BAUDRATE, database_path=None):
         self.serial_port = serial_port
         self.serial_baudrate = serial_baudrate
         self.database_path = database_path
@@ -233,29 +232,29 @@ class MMWProcessPipeline:
         self.ipc_process.start()
         
         # 4. 启动数据库写入线程 (主进程中)
-        self.unified_db_writer = UnifiedDatabaseWriter(self.uid, self.database_path)
+        self.unified_db_writer = UnifiedDatabaseWriter(self.database_path)
         self.unified_db_writer.start()
         
         self.scg_db_thread = SCGDatabaseWriter(
-            self.scg_queue_db, self.uid, self.database_path
+            self.scg_queue_db, self.database_path
         )
         self.scg_db_thread.set_unified_writer(self.unified_db_writer)
         self.scg_db_thread.start()
         
         self.breath_db_thread = BreathDatabaseWriter(
-            self.breath_queue_db, self.uid, self.database_path
+            self.breath_queue_db, self.database_path
         )
         self.breath_db_thread.set_unified_writer(self.unified_db_writer)
         self.breath_db_thread.start()
         
         self.heart_rate_db_thread = HeartRateDatabaseWriter(
-            self.heart_rate_queue_db, self.uid, self.database_path
+            self.heart_rate_queue_db, self.database_path
         )
         self.heart_rate_db_thread.set_unified_writer(self.unified_db_writer)
         self.heart_rate_db_thread.start()
         
         self.human_check_db_thread = HumanCheckDatabaseWriter(
-            self.human_check_queue_db, self.uid, self.database_path
+            self.human_check_queue_db, self.database_path
         )
         self.human_check_db_thread.set_unified_writer(self.unified_db_writer)
         self.human_check_db_thread.start()
@@ -346,13 +345,12 @@ def main():
     from src.config import SERIAL_PORT, SERIAL_BAUDRATE
 
     parser = argparse.ArgumentParser(description='毫米波监测系统 (多进程版)')
-    parser.add_argument('--uid', type=int, default=0, help='用户ID')
     parser.add_argument('--port', type=str, default=SERIAL_PORT, help='串口号')
     parser.add_argument('--baudrate', type=int, default=SERIAL_BAUDRATE, help='波特率')
     parser.add_argument('--db', type=str, default=None, help='数据库路径')
     args = parser.parse_args()
     
-    pipeline = MMWProcessPipeline(args.uid, args.port, args.baudrate, args.db)
+    pipeline = MMWProcessPipeline(args.port, args.baudrate, args.db)
     pipeline.run()
 
 

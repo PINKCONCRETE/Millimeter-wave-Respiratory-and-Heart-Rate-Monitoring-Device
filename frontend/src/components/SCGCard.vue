@@ -16,9 +16,14 @@ const currentBin = ref(0);
 const currentScore = ref(0.0);
 const isPremature = ref(false);
 
+const statusObj = computed(() => {
+    if (!props.isInBed) return { text: '离开', type: 'info' as const };
+    if (isPremature.value) return { text: '异常', type: 'danger' as const };
+    return { text: '正常', type: 'success' as const };
+});
+
 const statsList = computed(() => [
-    { label: 'Premature', value: isPremature.value ? 'Yes' : 'No', type: isPremature.value ? 'danger' as const : 'info' as const },
-    { label: 'Human', value: props.isInBed ? 'Yes' : 'No', type: props.isInBed ? 'success' as const : 'info' as const },
+    { label: '状态', value: statusObj.value.text, type: statusObj.value.type },
     { label: 'FPS', value: fps.value, type: 'success' as const }
 ]);
 
@@ -245,7 +250,7 @@ onUnmounted(() => {
 
 <template>
   <BaseChartCard
-    title="SCG Real-time Monitor"
+    title="SCG"
     :stats="statsList"
     :initial-window-seconds="20"
     :show-window-control="true"

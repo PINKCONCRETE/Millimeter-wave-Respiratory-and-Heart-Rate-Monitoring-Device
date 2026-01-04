@@ -15,8 +15,8 @@ const hasHuman = ref(false);
 const fps = ref(0);
 
 const statsList = computed(() => [
-    { label: 'Latest HRV', value: `${Math.round(lastValidHRV.value)} ms`, type: 'success' as const },
-    { label: 'Human', value: hasHuman.value ? 'Yes' : 'No', type: hasHuman.value ? 'success' as const : 'info' as const },
+    { label: 'HRV', value: `${Math.round(lastValidHRV.value)} ms`, type: 'success' as const },
+    { label: '状态', value: props.isInBed ? '正常' : '离开', type: props.isInBed ? 'success' as const : 'info' as const },
     { label: 'FPS', value: fps.value, type: 'success' as const }
 ]);
 
@@ -155,7 +155,7 @@ setupIPCListeners({
 
 <template>
   <BaseChartCard
-    title="HRV Trend"
+    title="HRV"
     :stats="statsList"
     :show-window-control="false"
     :show-y-axis-control="true"

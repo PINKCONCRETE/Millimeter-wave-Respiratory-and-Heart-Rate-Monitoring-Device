@@ -17,7 +17,6 @@ const getComponent = (id: string) => {
     return componentMap[id as keyof typeof componentMap];
 };
 
-const uid = ref(0);
 const isInBed = ref(true);
 const layoutMode = ref('grid');
 const focusedId = ref('scg');
@@ -95,7 +94,6 @@ onMounted(() => {
             <el-radio-button label="focus">1+3 Focus</el-radio-button>
           </el-radio-group>
         </div>
-        <el-input-number v-model="uid" :min="0" label="用户ID" size="small" />
       </div>
     </el-header>
     
@@ -150,7 +148,7 @@ body {
 }
 
 .layout-controls {
-    margin-right: 20px;
+  margin-right: 20px;
 }
 
 .app-main {

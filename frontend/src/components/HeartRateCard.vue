@@ -15,8 +15,8 @@ const hasHuman = ref(false);
 const fps = ref(0);
 
 const statsList = computed(() => [
-    { label: 'Latest HR', value: `${Math.round(lastValidHR.value)} bpm`, type: 'danger' as const },
-    { label: 'Human', value: hasHuman.value ? 'Yes' : 'No', type: hasHuman.value ? 'success' as const : 'info' as const },
+    { label: 'HR', value: `${Math.round(lastValidHR.value)} bpm`, type: 'danger' as const },
+    { label: '状态', value: props.isInBed ? '正常' : '离开', type: props.isInBed ? 'success' as const : 'info' as const },
     { label: 'FPS', value: fps.value, type: 'success' as const }
 ]);
 
@@ -158,7 +158,7 @@ setupIPCListeners({
 
 <template>
   <BaseChartCard
-    title="Heart Rate Trend"
+    title="心率"
     :stats="statsList"
     :show-window-control="false"
     :show-y-axis-control="true"

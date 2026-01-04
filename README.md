@@ -1,117 +1,88 @@
-# Non-contact Vital Signs Monitoring System Based on Millimeter-Wave Radar
+# 毫米波呼吸与心率监测装置
 
-## Quick Start
+这是一个基于毫米波雷达的非接触式生命体征监测系统，用于实时监测呼吸、心率和HRV（心率变异性）数据。系统包括后端数据处理（Python）和前端可视化（Vue/Electron）。
 
-### Prerequisites
-- **Python**: 3.9+
-- **Node.js**: 16+
-- **Operating System**: Windows (Tested), Linux/macOS (Compatible)
+## 功能特性
 
-### Backend Setup
-1. Open a terminal in the project root.
-2. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-3. Run the backend pipeline:
-   ```bash
-   python src/main_process.py
-   ```
-   *Note: Ensure the millimeter-wave radar device is connected via serial port (default: COM7). Check `src/config.py` to configure the port.*
+*   **SCG (Seismocardiogram) 监测**: 实时显示心震图波形。
+*   **呼吸监测**: 实时显示呼吸波形和呼吸率。
+*   **心率监测**: 实时显示心率变化趋势。
+*   **HRV 分析**: 实时计算并显示 SDNN 等 HRV 指标。
+*   **状态检测**: 自动检测人体是否在监测范围内（状态：正常/离开）。
+*   **可视化界面**: 
+    *   支持网格布局 (2x2 Grid) 和聚焦模式 (1+3 Focus)。
+    *   支持卡片拖拽排序。
+    *   图表支持缩放、Y轴自动/手动调整。
+    *   SCG 图表支持阈值限制和过滤。
 
-### Frontend Setup
-1. Open a new terminal and navigate to the frontend directory:
-   ```bash
-   cd frontend
-   ```
-2. Install dependencies:
-   ```bash
-   npm install
-   ```
-3. Run the development application:
-   ```bash
-   npm run electron:dev
-   ```
+## 系统架构
 
----
+*   **后端**: Python
+    *   负责读取毫米波雷达数据（或模拟数据）。
+    *   进行信号处理（呼吸提取、心率计算、HRV分析）。
+    *   通过 WebSocket/IPC 发送数据到前端。
+*   **前端**: Vue 3 + TypeScript + Element Plus + ECharts
+    *   实时数据可视化。
+    *   用户交互界面。
+    *   Electron 容器（可选，用于桌面应用封装）。
 
-## Abstract
-This project presents a non-contact vital signs monitoring system utilizing Frequency Modulated Continuous Wave (FMCW) millimeter-wave radar technology. The system is capable of real-time monitoring of human respiration and heart rate without physical contact, ensuring user comfort and privacy. By employing advanced signal processing algorithms—including FFT-based phase extraction, Seismocardiogram (SCG) waveform reconstruction, and autocorrelation-based heart rate estimation—the system achieves high accuracy and robustness. The software architecture adopts a decoupled frontend-backend design: a high-performance Python multiprocessing backend for data acquisition and signal processing, and an Electron-based Vue 3 frontend for real-time visualization and user interaction.
+## 快速开始
 
-## 1. Introduction
-Traditional vital signs monitoring requires contact sensors (e.g., ECG electrodes, pulse oximeters), which can be uncomfortable for long-term monitoring. Millimeter-wave radar offers a promising alternative by detecting minute chest wall displacements caused by cardiopulmonary activities. This system integrates radar hardware with a sophisticated software stack to provide a comprehensive health monitoring solution, suitable for home healthcare and elderly care scenarios.
+### 1. 环境准备
 
-## 2. System Architecture
+*   Python 3.8+
+*   Node.js 16+
+*   npm 或 yarn
 
-The system follows a modular architecture designed for performance and scalability.
+### 2. 启动后端
 
-### 2.1 Hardware Layer
-- **Sensor**: 24GHz/60GHz Millimeter-Wave Radar.
-- **Interface**: UART (Serial Communication).
-- **Data Format**: IQ (In-phase and Quadrature) signal frames containing range-bin data.
+进入项目根目录（或后端源码目录）：
 
-### 2.2 Backend (Python)
-The backend is built using Python's `multiprocessing` module to handle high-frequency radar data (20Hz-200Hz) efficiently. Key components include:
-- **Radar Acquisition Process (`mmw_radar.py`)**: Reads raw bytes from the serial port, decodes the frame structure, and extracts IQ data.
-- **Broadcaster Process**: Distributes raw data to specialized processing units.
-- **Signal Processing Processes**:
-  - **SCG Process (`mmw_scg_grade.py`)**: Reconstructs SCG waveforms using phase differentiation and evaluates signal quality.
-  - **Respiration Process (`mmw_breath.py`)**: Extracts respiratory waveforms using phase unwrapping and bandpass filtering.
-  - **Heart Rate Process (`mmw_heart_rate.py`)**: Computes heart rate and Heart Rate Variability (HRV) metrics (SDNN, RMSSD, pNN50).
-  - **Real-time Analysis (`mmw_realtime_analysis.py`)**: Performs instantaneous arrhythmia detection.
-- **Data Management**:
-  - **Database Writers (`mmw_database.py`)**: Asynchronously persists data to a local SQLite/MySQL database using Flask-SQLAlchemy.
-  - **IPC Worker (`ipc_worker.py`)**: Streams processed data to the frontend via UDP/TCP sockets.
+```bash
+# 安装依赖 (如果尚未安装)
+pip install -r requirements.txt
 
-### 2.3 Frontend (Electron + Vue 3)
-The frontend provides a user-friendly dashboard for visualization:
-- **Framework**: Electron (Cross-platform desktop container) + Vue 3 (Reactive UI).
-- **Visualization**: Apache ECharts for rendering real-time waveforms (SCG, Respiration, Heart Rate).
-- **Communication**: Receives JSON payloads from the backend via Inter-Process Communication (IPC).
-
-## 3. Methodology
-
-### 3.1 Signal Preprocessing
-Raw radar data undergoes Fast Fourier Transform (FFT) to generate Range Profiles. The target bin (range gate) corresponding to the subject's chest is dynamically selected based on energy maximization.
-
-### 3.2 Respiration Monitoring
-- **Phase Extraction**: The phase of the complex signal at the target bin is extracted.
-- **Unwrapping**: Phase discontinuities are corrected using unwrapping algorithms.
-- **Filtering**: A bandpass filter (0.1-0.5 Hz) isolates the respiratory component.
-- **Smoothing**: Reflection padding is applied to minimize edge effects in real-time processing.
-
-### 3.3 Heart Rate & HRV Estimation
-- **SCG Reconstruction**: The second derivative of the phase signal is computed to obtain the Seismocardiogram (SCG), which reflects cardiac mechanical activity.
-- **Peak Detection**: An adaptive peak detection algorithm identifies heartbeat fiducial points.
-- **HR Calculation**: Heart rate is derived from the inter-beat intervals (IBI).
-- **HRV Metrics**: Time-domain metrics (SDNN, RMSSD) are calculated from valid RR intervals to assess autonomic nervous system function.
-
-## 4. File Structure
-
-```
-root
-├── frontend/                # Electron + Vue 3 Frontend
-│   ├── src/
-│   │   ├── components/      # Visualization Cards (SCG, Breath, HR)
-│   │   └── utils/           # IPC Communication Logic
-│   └── electron/            # Main Electron Process
-├── src/                     # Python Backend Source
-│   ├── main_process.py      # Entry Point & Process Orchestrator
-│   ├── mmw_radar.py         # Radar Data Acquisition
-│   ├── mmw_breath.py        # Respiration Algorithm
-│   ├── mmw_scg_grade.py     # SCG & Signal Quality Algorithm
-│   ├── mmw_heart_rate.py    # Heart Rate & HRV Algorithm
-│   ├── mmw_database.py      # Database Operations
-│   └── config.py            # System Configuration
-├── requirements.txt         # Python Dependencies
-└── README.md                # Project Documentation
+# 启动后端服务
+python src/main.py
 ```
 
-## 5. Technology Stack
-- **Languages**: Python, TypeScript, HTML/CSS.
-- **Libraries (Backend)**: `multiprocessing`, `numpy`, `scipy`, `pyserial`, `flask-sqlalchemy`.
-- **Libraries (Frontend)**: `Vue.js`, `Element Plus`, `ECharts`, `Electron`.
-- **Database**: SQLite (Default) / MySQL.
+### 3. 启动前端
 
-## 6. Conclusion
-The developed system successfully demonstrates the feasibility of non-contact vital signs monitoring using millimeter-wave radar. The multi-process architecture ensures high real-time performance, while the integration of advanced signal processing algorithms guarantees data accuracy. The system provides a robust foundation for future applications in smart health and remote patient monitoring.
+进入前端目录：
+
+```bash
+cd frontend
+
+# 安装依赖
+npm install
+
+# 启动开发服务器
+npm run dev
+```
+
+## 使用说明
+
+1.  **布局切换**: 点击顶部的 "2x2 Grid" 或 "1+3 Focus" 按钮切换布局模式。
+2.  **卡片排序**: 拖拽卡片头部可以调整卡片位置。点击卡片可将其设为焦点（在 Focus 模式下）。
+3.  **图表控制**:
+    *   **窗口大小**: 在 SCG 和呼吸卡片中，可以调整显示的时间窗口大小（秒）。
+    *   **Y轴控制**: 可以开启 "Auto" 自动缩放，或手动设置 Y 轴的最小值和最大值。
+    *   **SCG 限制**: 在 SCG 卡片中，开启 "Limit" 开关可以设置波形幅值的过滤范围。
+4.  **状态指示**: 每个卡片右上角显示当前状态（正常/离开）和帧率 (FPS)。
+
+## 目录结构
+
+*   `src/`: 后端源代码
+    *   `mmw_breath.py`: 呼吸信号处理
+    *   `mmw_heart_rate.py`: 心率和 HRV 计算
+    *   `mmw_scg_grade.py`: SCG 信号处理
+    *   `heart_rate_processor.py`: 心率处理核心逻辑
+*   `frontend/`: 前端源代码
+    *   `src/components/`: Vue 组件 (SCGCard, BreathCard, HeartRateCard, HRVCard)
+    *   `src/utils/ipc.ts`: 前后端通信接口定义
+    *   `src/App.vue`: 主应用布局
+
+## 注意事项
+
+*   确保后端服务已启动并正确连接到雷达设备（或使用模拟数据模式）。
+*   前端默认连接本地后端服务。

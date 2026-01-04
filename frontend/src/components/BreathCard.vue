@@ -15,7 +15,7 @@ const status = ref('Waiting...');
 const respiratoryRate = ref(0);
 
 const statsList = computed(() => [
-    { label: 'Human', value: props.isInBed ? 'Yes' : 'No', type: props.isInBed ? 'success' as const : 'info' as const },
+    { label: '状态', value: props.isInBed ? '正常' : '离开', type: props.isInBed ? 'success' as const : 'info' as const },
     { label: 'FPS', value: fps.value, type: 'success' as const }
 ]);
 
@@ -196,7 +196,7 @@ onUnmounted(() => {
 
 <template>
   <BaseChartCard
-    title="Respiratory Waveform"
+    title="呼吸"
     :stats="statsList"
     :initial-window-seconds="20"
     :show-window-control="true"
