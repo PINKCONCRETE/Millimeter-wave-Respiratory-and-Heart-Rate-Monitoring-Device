@@ -11,7 +11,7 @@ from typing import Any
 
 import numpy as np
 import pywt
-from scipy.signal import butter, filtfilt, find_peaks, correlate, lfilter, lfilter_zi, savgol_filter
+from scipy.signal import butter, filtfilt, find_peaks, correlate, lfilter, lfilter_zi, savgol_filter, sosfiltfilt
 
 # Parameters adapted for 200Hz sampling rate
 PARAMS_OPTIMIZED = {
@@ -279,25 +279,85 @@ class SCGGradeProcess(multiprocessing.Process):
              
         return filtered
 
+    def _remove_respiration_ols(self, phase_data: np.ndarray) -> np.ndarray:
+        """
+        基于最小二乘法 (OLS) 的自适应呼吸干扰抵消.
+        
+        原理:
+        利用呼吸信号幅度大、频率低的特点，先提取呼吸参考信号。
+        然后构建包含呼吸基波、谐波及导数的干扰矩阵。
+        通过最小二乘法计算原始信号在干扰子空间上的投影，并将其减去。
+        
+        通信/雷达领域类比: 自适应旁瓣相消 (ASLC) 或 干扰对消 (Interference Cancellation).
+        """
+        n = len(phase_data)
+        if n < self.SAMPLING_RATE:
+            return phase_data
+
+        # 1. 提取呼吸参考信号 (Reference)
+        # 使用强低通滤波 (< 0.8Hz)
+        sos = butter(4, 0.8, 'low', fs=self.SAMPLING_RATE, output='sos')
+        resp_ref = sosfiltfilt(sos, phase_data)
+        
+        # 去除直流
+        resp_ref = resp_ref - np.mean(resp_ref)
+        
+        # 2. 构建干扰矩阵 (Interference Matrix)
+        # 包含: 呼吸基波, 呼吸二次谐波(非线性项), 呼吸的一阶导数(相移项)
+        # H = [r, r^2, r']
+        # r^2 用于模拟呼吸的非正弦畸变和谐波
+        # r' 用于模拟相位延迟 (90度相移)
+        r_sq = resp_ref ** 2
+        r_diff = np.gradient(resp_ref)
+        
+        # 归一化各分量，避免数值不稳定
+        eps = 1e-8
+        H = np.column_stack((
+            resp_ref / (np.std(resp_ref) + eps),
+            r_sq / (np.std(r_sq) + eps),
+            r_diff / (np.std(r_diff) + eps),
+            np.ones(n) # 偏置项
+        ))
+        
+        # 3. 最小二乘拟合 (Least Squares Fit)
+        # y_noise = H * w
+        # w = (H^T H)^-1 H^T y
+        try:
+            # 使用 lstsq求解，比直接求逆更稳定
+            w, _, _, _ = np.linalg.lstsq(H, phase_data, rcond=None)
+            noise_est = H @ w
+            
+            # 4. 干扰抵消
+            clean_phase = phase_data - noise_est
+            
+            return clean_phase
+            
+        except Exception as e:
+            print(f"OLS Cancellation Failed: {e}")
+            return phase_data
+
     def _compute_derivative_waveform(self, phase_data: np.ndarray) -> np.ndarray:
         """
         计算相位二阶差分 (加速度) 并进行小波去噪 + 匹配滤波.
         
         流程:
-        1. Phase -> Acceleration (Savitzky-Golay Differentiator)
-           - 使用 Savitzky-Golay 滤波器替代简单的7点差分
-           - 优势: 在计算微分的同时进行多项式平滑，利用更多点数(如31点)有效抗噪
-        2. Wavelet Denoising (1-40Hz Bandpass)
-        3. Matched Filtering (AO/AC Template)
+        1. Pre-processing: Adaptive Respiration Cancellation (OLS)
+        2. Phase -> Acceleration (Savitzky-Golay Differentiator)
+        3. Wavelet Denoising (1-40Hz Bandpass)
+        4. Matched Filtering (AO/AC Template)
         """
         unwrapped_phase = np.unwrap(phase_data)
+        
+        # 1. 自适应呼吸干扰抵消 (Adaptive Cancellation)
+        # 从原始相位中“连根拔起”呼吸成分及其谐波
+        clean_phase = self._remove_respiration_ols(unwrapped_phase)
         
         # 1. 计算加速度 (Acceleration) - 使用 Savitzky-Golay 微分器
         # deriv=2 表示计算二阶导数(加速度)
         # delta=self.TIME_STEP 用于归一化时间单位
         try:
             acceleration = savgol_filter(
-                unwrapped_phase, 
+                clean_phase, 
                 window_length=self.SAVGOL_WINDOW, 
                 polyorder=self.SAVGOL_POLYORDER, 
                 deriv=2, 
@@ -307,7 +367,7 @@ class SCGGradeProcess(multiprocessing.Process):
         except Exception as e:
             print(f"Savitzky-Golay failed: {e}, falling back to simple diff")
             # Fallback (simple 2nd diff) if signal too short
-            acceleration = np.diff(unwrapped_phase, n=2, prepend=[0,0]) / (self.TIME_STEP**2)
+            acceleration = np.diff(clean_phase, n=2, prepend=[0,0]) / (self.TIME_STEP**2)
 
         raw_scg = acceleration
         
