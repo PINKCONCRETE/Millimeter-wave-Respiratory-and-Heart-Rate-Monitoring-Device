@@ -204,17 +204,18 @@ class MMWRealtimeAnalysisProcess(multiprocessing.Process):
         rhythm_result = analyze_heart_rhythm(peaks, self.SAMPLING_RATE)
         
         # 4. 发送结果 (处理 NaN)
-        hr = rhythm_result['hr']
-        if np.isnan(hr) or np.isinf(hr):
-            hr = 0.0 # 或者 None/0
-        else:
-            hr = float(hr)
+        # 移除 RTHR 的输出，只保留 Premature 检测
+        # hr = rhythm_result['hr']
+        # if np.isnan(hr) or np.isinf(hr):
+        #     hr = 0.0 # 或者 None/0
+        # else:
+        #     hr = float(hr)
             
         premature = bool(rhythm_result['premature'])
         
         output_data = {
             "type": "realtime_analysis",
-            "realtime_hr": hr,
+            # "realtime_hr": hr, # Removed as per requirement
             "realtime_premature": premature,
             "timestamp": time.time()
         }

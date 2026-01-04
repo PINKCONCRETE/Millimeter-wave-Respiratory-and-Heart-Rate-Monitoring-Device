@@ -8,7 +8,7 @@ import multiprocessing
 import time
 from collections import deque
 from queue import Empty
-from typing import Any
+from typing import Any, List, Union
 
 import numpy as np
 from src.heart_rate_processor import calculate_heart_rate
@@ -61,27 +61,51 @@ class MMWHeartRateProcess(multiprocessing.Process):
         
         self._stop_event = multiprocessing.Event()
 
-    def _calculate_stress_metrics(self, ibi_list: list[float] | np.ndarray) -> tuple[float, float, str]:
-        """计算HRV(SDNN)和压力指数."""
+    def _calculate_stress_metrics(self, ibi_list: Union[List[float], np.ndarray]) -> tuple[float, float, float, float, float, float, int, float, str]:
+        """计算HRV(SDNN, RMSSD, pNN50)和压力指数.
+        
+        Returns:
+            sdnn, rmssd, pnn50, mean_rr, sum_square_rr, stress_index, num_rr, hrv_sdnn (duplicate for compat), stress_level
+        """
         # Fix: handle numpy array truth value ambiguity by checking len directly
         if len(ibi_list) < 2:
-            return 0.0, 0.0, "低"
+            return 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0, 0.0, "低"
             
-        # HRV (SDNN)
+        # HRV Calculation
         ibi_array = np.array(ibi_list)
-        hrv = float(np.std(ibi_array)) # SDNN in ms if input is ms, or s if s
+        # Convert to seconds for standard HRV metrics calculation (if inputs are in ms)
+        # Usually ibi_list from processor is in ms.
+        rr_intervals_s = ibi_array / 1000.0
         
+        # 1. SDNN (ms)
+        sdnn = float(np.std(rr_intervals_s) * 1000)
+        
+        # 2. RMSSD (ms)
+        rr_diff = np.diff(rr_intervals_s)
+        rmssd = float(np.sqrt(np.mean(rr_diff ** 2)) * 1000)
+        
+        # 3. pNN50 (%)
+        nn50_count = np.sum(np.abs(rr_diff) > 0.05)
+        pnn50 = float((nn50_count / len(rr_diff)) * 100)
+        
+        # 4. Mean RR (ms)
+        mean_rr = float(np.mean(ibi_array))
+        
+        # 5. Sum Square RR (ms^2) - from old code logic, though unit is ambiguous there, assuming raw sum of squares
+        # Old code: sum_square_rr = result["sum_square_RR"] which came from processor.
+        # But here we calculate from ibi_list directly to be safe or use processor output if available.
+        # Let's calculate it here to be consistent.
+        sum_square_rr = float(np.sum(ibi_array ** 2))
+        
+        num_rr = len(ibi_list)
+
         # Stress Index (Baevsky)
         # SI = AMo / (2 * Mo * MxDMn)
         # AMo: Mode amplitude (%)
         # Mo: Mode (s)
         # MxDMn: Variation range (s)
         
-        # Convert to seconds if needed (assuming input is ms based on typical IBI)
-        # But wait, let's check input unit. usually ms.
-        # If input is seconds, convert to ms for histogram
-        
-        # Check range to guess unit
+        # Convert to ms for histogram if not already
         if np.mean(ibi_array) < 2.0: # Likely seconds
              ibi_ms = ibi_array * 1000
         else:
@@ -111,7 +135,7 @@ class MMWHeartRateProcess(multiprocessing.Process):
         else:
             level = "高"
             
-        return hrv, si, level
+        return sdnn, rmssd, pnn50, mean_rr, sum_square_rr, si, num_rr, sdnn, level
 
     def run(self) -> None:
         """主循环：从队列消费数据并处理."""
@@ -223,19 +247,24 @@ class MMWHeartRateProcess(multiprocessing.Process):
                 self.final_heart_rate = result["heart_rate"]
             
             # Calculate HRV and Stress
-            hrv, stress_index, stress_level = self._calculate_stress_metrics(result.get("ibi_list", []))
+            sdnn, rmssd, pnn50, mean_rr, sum_square_rr, stress_index, num_rr, hrv_sdnn, stress_level = self._calculate_stress_metrics(result.get("ibi_list", []))
 
             # 构造输出结果
             hr_dict = {
                 "type": "heart_rate_data",
                 "status": result["status"],
                 "heart_rate": float(self.final_heart_rate),
-                "hrv": hrv,
+                "hrv_sdnn": sdnn,
+                "hrv_rmssd": rmssd,
+                "hrv_pnn50": pnn50,
+                "mean_rr_interval": mean_rr,
+                "sum_square_rr": sum_square_rr,
+                "num_rr_intervals": num_rr,
                 "stress_index": stress_index,
                 "stress_level": stress_level,
                 "frame_idx": self._completed_frames,
                 "timestamp": self._completed_frames * self.TIME_STEP,
-                "method": "old_algorithm"
+                "method": "old_algorithm_ported"
             }
             
             if not self._output_queue.full():
