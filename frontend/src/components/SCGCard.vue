@@ -1,58 +1,8 @@
-<template>
-  <BaseChartCard
-    title="SCG Real-time Monitor"
-    :stats="statsList"
-    :initial-window-seconds="20"
-    :show-window-control="true"
-    :show-y-axis-control="true"
-    :default-y-min="-1.0"
-    :default-y-max="1.0"
-    @init="onChartInit"
-    @window-change="onWindowChange"
-    @y-axis-change="onYAxisChange"
-  >
-    <template #stats-extra>
-        <div class="limit-controls" style="display: flex; align-items: center; gap: 8px; margin-right: 16px;">
-            <el-switch
-                v-model="isLimitEnabled"
-                size="small"
-                active-text="Limit"
-                inline-prompt
-                @change="onLimitChange"
-            />
-            <div v-if="isLimitEnabled" style="display: flex; align-items: center; gap: 4px;">
-                <el-input-number 
-                    v-model="limitMin" 
-                    size="small" 
-                    :step="0.1" 
-                    controls-position="right" 
-                    style="width: 70px" 
-                    placeholder="Min"
-                    @change="onLimitChange"
-                />
-                <span style="color: #909399;">-</span>
-                <el-input-number 
-                    v-model="limitMax" 
-                    size="small" 
-                    :step="0.1" 
-                    controls-position="right" 
-                    style="width: 70px" 
-                    placeholder="Max"
-                    @change="onLimitChange"
-                />
-            </div>
-        </div>
-        <!-- <el-tag size="small" type="primary">Bin: {{ currentBin }}</el-tag>
-        <el-tag size="small" type="primary" style="margin-left: 8px">Score: {{ currentScore.toFixed(1) }}</el-tag> -->
-    </template>
-  </BaseChartCard>
-</template>
-
 <script setup lang="ts">
 import { ref, computed, onUnmounted, watch } from 'vue';
 import * as echarts from 'echarts';
 import BaseChartCard from './BaseChartCard.vue';
-import { setupIPCListeners, type SCGData, type FPSData } from '../utils/ipc';
+import { setupIPCListeners, type SCGData, type FPSData, type RealtimeAnalysisData } from '../utils/ipc';
 
 const props = defineProps<{
   isInBed: boolean
@@ -90,16 +40,16 @@ const isLimitEnabled = ref(false);
 const limitMin = ref(-0.5);
 const limitMax = ref(0.5);
 
-const onLimitChange = () => {
-    hasNewData = true;
-};
-
 // Render loop
 let animationFrameId: number | null = null;
 let lastUiFpsTime = Date.now();
 let uiFrameCount = 0;
 let hasNewData = false;
 let lastIsInBed = true;
+
+const onLimitChange = () => {
+    hasNewData = true;
+};
 
 watch(() => props.isInBed, (newVal) => {
     hasNewData = true; // Force update on state change
@@ -292,3 +242,74 @@ onUnmounted(() => {
     }
 });
 </script>
+
+<template>
+  <BaseChartCard
+    title="SCG Real-time Monitor"
+    :stats="statsList"
+    :initial-window-seconds="20"
+    :show-window-control="true"
+    :show-y-axis-control="true"
+    :default-y-min="-1.0"
+    :default-y-max="1.0"
+    @init="onChartInit"
+    @window-change="onWindowChange"
+    @y-axis-change="onYAxisChange"
+  >
+    <template #stats-extra>
+        <div class="limit-controls">
+            <el-switch
+                v-model="isLimitEnabled"
+                size="small"
+                active-text="Limit"
+                inline-prompt
+                @change="onLimitChange"
+            />
+            <div v-if="isLimitEnabled" class="limit-inputs">
+                <el-input-number 
+                    v-model="limitMin" 
+                    size="small" 
+                    :step="0.1" 
+                    controls-position="right" 
+                    class="limit-input"
+                    placeholder="Min"
+                    @change="onLimitChange"
+                />
+                <span class="limit-separator">-</span>
+                <el-input-number 
+                    v-model="limitMax" 
+                    size="small" 
+                    :step="0.1" 
+                    controls-position="right" 
+                    class="limit-input"
+                    placeholder="Max"
+                    @change="onLimitChange"
+                />
+            </div>
+        </div>
+    </template>
+  </BaseChartCard>
+</template>
+
+<style scoped>
+.limit-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-right: 16px;
+}
+
+.limit-inputs {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.limit-input {
+    width: 70px;
+}
+
+.limit-separator {
+    color: #909399;
+}
+</style>

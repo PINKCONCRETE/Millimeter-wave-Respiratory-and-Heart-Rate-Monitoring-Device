@@ -1,16 +1,3 @@
-<template>
-  <BaseChartCard
-    title="HRV Trend"
-    :stats="statsList"
-    :show-window-control="false"
-    :show-y-axis-control="true"
-    :default-y-min="0"
-    :default-y-max="100"
-    @init="onChartInit"
-    @y-axis-change="onYAxisChange"
-  />
-</template>
-
 <script setup lang="ts">
 import { ref, computed, onUnmounted, watch } from 'vue';
 import * as echarts from 'echarts';
@@ -165,3 +152,16 @@ setupIPCListeners({
     }
 });
 </script>
+
+<template>
+  <BaseChartCard
+    title="HRV Trend"
+    :stats="statsList"
+    :show-window-control="false"
+    :show-y-axis-control="true"
+    :default-y-min="0"
+    :default-y-max="100"
+    @init="onChartInit"
+    @y-axis-change="onYAxisChange"
+  />
+</template>

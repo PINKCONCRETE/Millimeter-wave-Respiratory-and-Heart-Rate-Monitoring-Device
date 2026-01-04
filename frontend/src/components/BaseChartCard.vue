@@ -1,60 +1,5 @@
-<template>
-  <el-card class="box-card" shadow="hover" :body-style="{ padding: '0px', flex: 1, display: 'flex', flexDirection: 'column', height: '100%' }">
-    <template #header>
-      <div class="card-header">
-        <div class="header-left">
-            <span class="title">{{ title }}</span>
-        </div>
-        <div class="controls" style="display: flex; align-items: center; gap: 8px; margin-left: 20px;">
-            <div class="control-group" v-if="showWindowControl">
-                <el-tooltip content="Display Window Size (seconds)" placement="top">
-                    <el-input-number 
-                        v-model="internalWindowSize" 
-                        size="small" 
-                        :min="1" 
-                        :step="1" 
-                        controls-position="right" 
-                        style="width: 70px" 
-                        @change="handleWindowChange"
-                    />
-                </el-tooltip>
-            </div>
-            <div class="control-group" style="display: flex; align-items: center;" v-if="showYAxisControl">
-                <el-tooltip content="Auto Scale Y-Axis" placement="top">
-                    <el-switch 
-                        v-model="autoScaleY" 
-                        size="small"
-                        active-text="Auto" 
-                        inactive-text="Man" 
-                        inline-prompt
-                        style="--el-switch-on-color: #13ce66; margin-right: 5px;"
-                        @change="handleYAxisChange"
-                    />
-                </el-tooltip>
-                <div v-if="!autoScaleY" style="display: flex; align-items: center; gap: 4px;">
-                    <el-input-number v-model="manualYMin" size="small" :step="0.1" controls-position="right" style="width: 60px" @change="handleYAxisChange" placeholder="Min"/>
-                    <span style="color: #909399;">-</span>
-                    <el-input-number v-model="manualYMax" size="small" :step="0.1" controls-position="right" style="width: 60px" @change="handleYAxisChange" placeholder="Max"/>
-                    <el-button size="small" circle icon="Refresh" @click="resetYAxis" title="Reset Default" style="margin-left: 2px;" />
-                </div>
-            </div>
-        </div>
-        <div class="stats" style="margin-left: auto; display: flex; align-items: center;">
-            <slot name="stats-extra"></slot>
-            <el-tag v-for="stat in stats" :key="stat.label" size="small" :type="stat.type" style="margin-left: 8px">
-                {{ stat.label }}: {{ stat.value }}
-            </el-tag>
-        </div>
-      </div>
-    </template>
-    <div class="chart-content" style="flex: 1; min-height: 0;">
-      <div ref="chartRef" class="chart-div" style="width: 100%; height: 100%;"></div>
-    </div>
-  </el-card>
-</template>
-
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch } from 'vue';
+import { ref, onMounted, onUnmounted } from 'vue';
 import * as echarts from 'echarts';
 
 interface StatItem {
@@ -98,11 +43,16 @@ const initChart = () => {
             chartInstance?.resize();
         });
         resizeObserver.observe(chartRef.value);
+        
+        onUnmounted(() => {
+            resizeObserver.disconnect();
+            chartInstance?.dispose();
+        });
     }
 };
 
-const handleWindowChange = () => {
-    emit('window-change', internalWindowSize.value);
+const handleWindowChange = (val: number | undefined) => {
+    if (val) emit('window-change', val);
 };
 
 const handleYAxisChange = () => {
@@ -110,15 +60,8 @@ const handleYAxisChange = () => {
 };
 
 const resetYAxis = () => {
-    autoScaleY.value = true;
     manualYMin.value = props.defaultYMin ?? -1.0;
     manualYMax.value = props.defaultYMax ?? 1.0;
-    
-    // Reset Zoom if possible
-    chartInstance?.dispatchAction({
-        type: 'restore'
-    });
-    
     handleYAxisChange();
     emit('reset-y-axis');
 };
@@ -126,31 +69,149 @@ const resetYAxis = () => {
 onMounted(() => {
     initChart();
 });
-
-onUnmounted(() => {
-    chartInstance?.dispose();
-});
-
-defineExpose({
-    chartInstance
-});
 </script>
+
+<template>
+  <el-card class="box-card" shadow="hover">
+    <template #header>
+      <div class="card-header">
+        <div class="header-left">
+            <span class="title">{{ title }}</span>
+        </div>
+        <div class="controls">
+            <div class="control-group" v-if="showWindowControl">
+                <el-tooltip content="Display Window Size (seconds)" placement="top">
+                    <el-input-number 
+                        v-model="internalWindowSize" 
+                        size="small" 
+                        :min="1" 
+                        :step="1" 
+                        controls-position="right" 
+                        class="window-input"
+                        @change="handleWindowChange"
+                    />
+                </el-tooltip>
+            </div>
+            <div class="control-group" v-if="showYAxisControl">
+                <el-tooltip content="Auto Scale Y-Axis" placement="top">
+                    <el-switch 
+                        v-model="autoScaleY" 
+                        size="small"
+                        active-text="Auto" 
+                        inactive-text="Man" 
+                        inline-prompt
+                        class="y-axis-switch"
+                        @change="handleYAxisChange"
+                    />
+                </el-tooltip>
+                <div v-if="!autoScaleY" class="manual-y-controls">
+                    <el-input-number v-model="manualYMin" size="small" :step="0.1" controls-position="right" class="y-input" @change="handleYAxisChange" placeholder="Min"/>
+                    <span class="separator">-</span>
+                    <el-input-number v-model="manualYMax" size="small" :step="0.1" controls-position="right" class="y-input" @change="handleYAxisChange" placeholder="Max"/>
+                    <el-button size="small" circle icon="Refresh" @click="resetYAxis" title="Reset Default" class="reset-btn" />
+                </div>
+            </div>
+        </div>
+        <div class="stats">
+            <slot name="stats-extra"></slot>
+            <el-tag v-for="stat in stats" :key="stat.label" size="small" :type="stat.type" class="stat-tag">
+                {{ stat.label }}: {{ stat.value }}
+            </el-tag>
+        </div>
+      </div>
+    </template>
+    <div class="chart-content">
+      <div ref="chartRef" class="chart-div"></div>
+    </div>
+  </el-card>
+</template>
 
 <style scoped>
 .box-card {
-  height: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
 }
+
+.box-card :deep(.el-card__body) {
+    padding: 0px;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+
 .card-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  height: 24px; /* Compact header */
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
 }
+
+.header-left {
+    display: flex;
+    align-items: center;
+}
+
 .title {
     font-weight: bold;
-    font-size: 14px;
 }
+
+.controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: 20px;
+}
+
+.control-group {
+    display: flex;
+    align-items: center;
+}
+
+.window-input {
+    width: 70px;
+}
+
+.y-axis-switch {
+    --el-switch-on-color: #13ce66;
+    margin-right: 5px;
+}
+
+.manual-y-controls {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.y-input {
+    width: 60px;
+}
+
+.separator {
+    color: #909399;
+}
+
+.reset-btn {
+    margin-left: 2px;
+}
+
+.stats {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+}
+
+.stat-tag {
+    margin-left: 8px;
+}
+
 .chart-content {
-    padding: 10px;
+    flex: 1;
+    min-height: 0;
+}
+
+.chart-div {
+    width: 100%;
+    height: 100%;
 }
 </style>

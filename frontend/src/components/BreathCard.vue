@@ -1,18 +1,3 @@
-<template>
-  <BaseChartCard
-    title="Respiratory Waveform"
-    :stats="statsList"
-    :initial-window-seconds="20"
-    :show-window-control="true"
-    :show-y-axis-control="true"
-    :default-y-min="-1.0"
-    :default-y-max="1.0"
-    @init="onChartInit"
-    @window-change="onWindowChange"
-    @y-axis-change="onYAxisChange"
-  />
-</template>
-
 <script setup lang="ts">
 import { ref, computed, onUnmounted, watch } from 'vue';
 import * as echarts from 'echarts';
@@ -208,3 +193,18 @@ onUnmounted(() => {
     }
 });
 </script>
+
+<template>
+  <BaseChartCard
+    title="Respiratory Waveform"
+    :stats="statsList"
+    :initial-window-seconds="20"
+    :show-window-control="true"
+    :show-y-axis-control="true"
+    :default-y-min="-1.0"
+    :default-y-max="1.0"
+    @init="onChartInit"
+    @window-change="onWindowChange"
+    @y-axis-change="onYAxisChange"
+  />
+</template>
