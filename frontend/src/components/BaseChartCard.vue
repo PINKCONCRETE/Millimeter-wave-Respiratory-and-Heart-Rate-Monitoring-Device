@@ -8,7 +8,7 @@ interface StatItem {
     type: 'success' | 'warning' | 'info' | 'danger' | 'primary';
 }
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
     title: string;
     stats?: StatItem[];
     initialWindowSeconds?: number;
@@ -16,7 +16,14 @@ const props = defineProps<{
     showYAxisControl?: boolean;
     defaultYMin?: number;
     defaultYMax?: number;
-}>();
+}>(), {
+    stats: () => [],
+    initialWindowSeconds: 10,
+    showWindowControl: false,
+    showYAxisControl: true,
+    defaultYMin: -1.0,
+    defaultYMax: 1.0
+});
 
 const emit = defineEmits<{
     (e: 'init', instance: echarts.ECharts): void;
