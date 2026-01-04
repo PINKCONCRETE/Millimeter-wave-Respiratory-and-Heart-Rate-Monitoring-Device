@@ -1,48 +1,71 @@
 <template>
-  <el-card class="box-card" shadow="hover">
-    <template #header>
-      <div class="card-header">
-        <span class="title">呼吸监测</span>
-        <div class="status-badges">
-          <el-tag :type="isInBed ? 'success' : 'info'" size="small">{{ isInBed ? '在床' : '离床' }}</el-tag>
-          <el-tag v-if="warningId !== 0" type="danger" size="small" style="margin-left: 5px">
-            {{ getWarningText(warningId) }}
-          </el-tag>
-        </div>
-      </div>
-    </template>
-    <div class="chart-content">
-      <div class="metric-value">
-        <span class="number">{{ respiratoryRate.toFixed(1) }}</span>
-        <span class="unit">BPM</span>
-      </div>
-      <div ref="chartRef" class="chart-div"></div>
-    </div>
-  </el-card>
+  <BaseChartCard
+    title="Respiratory Waveform"
+    :stats="statsList"
+    :initial-window-seconds="20"
+    :show-window-control="true"
+    :show-y-axis-control="true"
+    @init="onChartInit"
+    @window-change="onWindowChange"
+    @y-axis-change="onYAxisChange"
+  />
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch } from 'vue';
+import { ref, computed, onUnmounted } from 'vue';
 import * as echarts from 'echarts';
-import { setupIPCListeners, type BreathData } from '../utils/ipc';
+import BaseChartCard from './BaseChartCard.vue';
+import { setupIPCListeners, type BreathData, type FPSData } from '../utils/ipc';
 
 const props = defineProps<{
   isInBed: boolean
 }>();
 
-const chartRef = ref<HTMLElement | null>(null);
-let chartInstance: echarts.ECharts | null = null;
-const warningId = ref(0);
+const fps = ref(0);
+const uiFps = ref(0);
+const bufferSize = ref(0);
+const status = ref('Waiting...');
 const respiratoryRate = ref(0);
-let waveformBuffer: number[] = [];
 
-const initChart = () => {
-  if (chartRef.value) {
-    chartInstance = echarts.init(chartRef.value);
+const statsList = computed(() => [
+    { label: 'RR', value: `${respiratoryRate.value} rpm`, type: 'primary' as const },
+    { label: 'Buffer', value: bufferSize.value, type: 'info' as const },
+    { label: 'Backend', value: fps.value, type: 'success' as const },
+    { label: 'UI', value: uiFps.value, type: 'warning' as const },
+    { label: 'Status', value: status.value, type: status.value === 'Active' ? 'success' as const : 'warning' as const }
+]);
+
+// Chart state
+let chartInstance: echarts.ECharts | null = null;
+const SAMPLING_RATE = 20; // 20Hz for Breath
+const BUFFER_LIMIT = 2000; // 100 seconds buffer
+let dataBuffer: number[] = [];
+let pendingData: number[] = [];
+
+// Display control
+let currentWindowPoints = 400; // Default 20s * 20Hz
+let isAutoScaleY = true;
+let manualYMin = -1.0;
+let manualYMax = 1.0;
+
+// Render loop
+let animationFrameId: number | null = null;
+let lastUiFpsTime = Date.now();
+let uiFrameCount = 0;
+let hasNewData = false;
+
+const onChartInit = (instance: echarts.ECharts) => {
+    chartInstance = instance;
+    
     chartInstance.setOption({
-      grid: { top: 10, right: 10, bottom: 20, left: 40 },
+      grid: { top: 30, right: 20, bottom: 20, left: 50 },
       tooltip: { trigger: 'axis' },
-      xAxis: { type: 'category', data: [], show: false },
+      xAxis: { 
+          type: 'category', 
+          show: false,
+          min: 0,
+          max: currentWindowPoints 
+      },
       yAxis: { 
         type: 'value', 
         scale: true,
@@ -55,106 +78,124 @@ const initChart = () => {
         showSymbol: false,
         lineStyle: { color: '#409EFF', width: 2 },
         areaStyle: {
-          color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+            color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
             { offset: 0, color: 'rgba(64,158,255,0.3)' },
             { offset: 1, color: 'rgba(64,158,255,0.05)' }
           ])
         },
         animation: false
-      }]
+      }],
+      animation: false
     });
-  }
+
+    startRenderLoop();
 };
 
-const updateChart = () => {
-  if (chartInstance && waveformBuffer.length > 0) {
-    if (!props.isInBed) {
-        chartInstance.setOption({ series: [{ data: [] }] });
-        return;
+const onWindowChange = (seconds: number) => {
+    currentWindowPoints = seconds * SAMPLING_RATE;
+    if (chartInstance) {
+        chartInstance.setOption({
+            xAxis: { max: currentWindowPoints }
+        });
+        hasNewData = true;
     }
-    chartInstance.setOption({
-      xAxis: { data: Array.from({ length: waveformBuffer.length }, (_, i) => i) },
-      series: [{ data: waveformBuffer }]
-    });
-  }
 };
 
-const getWarningText = (id: number) => {
-  if (id === 21) return '呼吸暂停';
-  if (id === 22) return 'COPD风险';
-  return '未知';
+const onYAxisChange = (auto: boolean, min: number, max: number) => {
+    isAutoScaleY = auto;
+    manualYMin = min;
+    manualYMax = max;
+    hasNewData = true;
 };
 
-// Resize chart on window resize
-const handleResize = () => chartInstance?.resize();
-
-onMounted(() => {
-  initChart();
-  window.addEventListener('resize', handleResize);
+const renderLoop = () => {
+  const now = Date.now();
+  uiFrameCount++;
   
-  setupIPCListeners({
-    onBreath: (data: BreathData) => {
-      waveformBuffer = data.displacement;
-      warningId.value = data.warning_id;
-      respiratoryRate.value = data.respiratory_rate;
-      updateChart();
+  if (now - lastUiFpsTime >= 1000) {
+    uiFps.value = uiFrameCount;
+    uiFrameCount = 0;
+    lastUiFpsTime = now;
+  }
+
+  // Process pending data
+  if (pendingData.length > 0) {
+      hasNewData = true;
+      dataBuffer.push(...pendingData);
+      pendingData = [];
+
+      if (dataBuffer.length > BUFFER_LIMIT) {
+          dataBuffer = dataBuffer.slice(dataBuffer.length - BUFFER_LIMIT);
+      }
+      bufferSize.value = dataBuffer.length;
+  }
+
+  if ((hasNewData || !isAutoScaleY) && chartInstance) {
+    if (props.isInBed) {
+        const displayData = dataBuffer.slice(-currentWindowPoints);
+        const xData = Array.from({ length: displayData.length }, (_, i) => i);
+        
+        const yAxisOption = isAutoScaleY ? {
+            scale: true,
+            min: null,
+            max: null
+        } : {
+            scale: false,
+            min: manualYMin,
+            max: manualYMax
+        };
+
+        chartInstance.setOption({
+            xAxis: { 
+                data: xData,
+                max: currentWindowPoints
+            },
+            yAxis: yAxisOption,
+            series: [{ data: displayData }]
+        });
+        hasNewData = false;
     }
-  });
+  }
+
+  animationFrameId = requestAnimationFrame(renderLoop);
+};
+
+const startRenderLoop = () => {
+    if (animationFrameId === null) {
+        renderLoop();
+    }
+};
+
+// IPC Listeners
+setupIPCListeners({
+    onBreath: (data: BreathData) => {
+        // Use breath_value (displacement) for waveform
+        // data.breath_value is incremental (single float)
+        if (typeof data.breath_value === 'number') {
+             pendingData.push(data.breath_value);
+        } 
+        // Fallback for legacy array
+        else if (data.displacement && data.displacement.length > 0) {
+             pendingData.push(data.displacement[data.displacement.length - 1]);
+        }
+        
+        if (data.respiratory_rate !== undefined) {
+            respiratoryRate.value = data.respiratory_rate;
+        }
+        status.value = 'Active';
+    },
+    onFPS: (data: FPSData) => {
+        // We might want to filter only Breath module FPS here, but currently FPS data is generic
+        // Assuming Broadcaster sends FPS for all modules, we might need to check source if available.
+        // But for now, just displaying the last received FPS is fine, or update ipc.ts to filter.
+        fps.value = data.fps;
+    }
 });
 
 onUnmounted(() => {
-  window.removeEventListener('resize', handleResize);
-  chartInstance?.dispose();
-});
-
-// Watch isInBed to clear chart if needed immediately
-watch(() => props.isInBed, (newVal) => {
-    if (!newVal && chartInstance) {
-        chartInstance.setOption({ series: [{ data: [] }] });
+    if (animationFrameId !== null) {
+        cancelAnimationFrame(animationFrameId);
+        animationFrameId = null;
     }
 });
 </script>
-
-<style scoped>
-.box-card {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-}
-.card-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-.title {
-  font-weight: bold;
-  font-size: 16px;
-}
-.chart-content {
-  position: relative;
-  height: 250px;
-}
-.metric-value {
-  position: absolute;
-  top: 0;
-  left: 10px;
-  z-index: 10;
-  background: rgba(255,255,255,0.8);
-  padding: 2px 5px;
-  border-radius: 4px;
-}
-.number {
-  font-size: 24px;
-  font-weight: bold;
-  color: #303133;
-}
-.unit {
-  font-size: 12px;
-  color: #909399;
-  margin-left: 4px;
-}
-.chart-div {
-  width: 100%;
-  height: 100%;
-}
-</style>

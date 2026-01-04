@@ -1,123 +1,134 @@
 <template>
-  <el-card class="box-card" shadow="hover">
-    <template #header>
-      <div class="card-header">
-        <span class="title">HRV趋势 (SDNN)</span>
-        <el-tag :type="getStressType(stressLevel)" size="small">压力: {{ stressLevel }}</el-tag>
-      </div>
-    </template>
-    <div class="chart-content">
-      <div class="metric-value">
-        <span class="number">{{ stressIndex.toFixed(1) }}</span>
-        <span class="unit">SI</span>
-      </div>
-      <div ref="chartRef" class="chart-div"></div>
-    </div>
-  </el-card>
+  <BaseChartCard
+    title="HRV Trend"
+    :stats="statsList"
+    :show-window-control="false"
+    :show-y-axis-control="true"
+    @init="onChartInit"
+    @y-axis-change="onYAxisChange"
+  />
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch } from 'vue';
+import { ref, computed, onUnmounted } from 'vue';
 import * as echarts from 'echarts';
-import { setupIPCListeners, type HeartRateData } from '../utils/ipc';
+import BaseChartCard from './BaseChartCard.vue';
+import { setupIPCListeners, type HeartRateData, type HumanCheckData } from '../utils/ipc';
 
 const props = defineProps<{
   isInBed: boolean
 }>();
 
-const chartRef = ref<HTMLElement | null>(null);
-let chartInstance: echarts.ECharts | null = null;
+const currentHRV = ref(0);
 const stressIndex = ref(0);
-const stressLevel = ref('低');
-const hrvHistory: {time: number, value: number}[] = [];
+const hasHuman = ref(false);
 
-const initChart = () => {
-  if (chartRef.value) {
-    chartInstance = echarts.init(chartRef.value);
+const statsList = computed(() => [
+    { label: 'HRV', value: `${currentHRV.value} ms`, type: 'success' as const },
+    { label: 'Stress Index', value: stressIndex.value, type: 'warning' as const },
+    { label: 'Human', value: hasHuman.value ? 'Yes' : 'No', type: hasHuman.value ? 'success' as const : 'info' as const }
+]);
+
+// Chart state
+let chartInstance: echarts.ECharts | null = null;
+const MAX_HISTORY_POINTS = 3600; // Keep 1 hour of data at 1Hz
+type DataPoint = { name: string; value: [string, number | null] };
+let dataBuffer: DataPoint[] = [];
+let isAutoScaleY = true;
+let manualYMin = 0;
+let manualYMax = 100;
+
+const onChartInit = (instance: echarts.ECharts) => {
+    chartInstance = instance;
+    
     chartInstance.setOption({
-      grid: { top: 10, right: 10, bottom: 20, left: 40 },
-      tooltip: { trigger: 'axis' },
-      xAxis: { type: 'time', show: true, axisLabel: { show: true, formatter: '{HH}:{mm}:{ss}' } },
+      grid: { top: 30, right: 20, bottom: 20, left: 50 },
+      tooltip: { 
+          trigger: 'axis',
+          formatter: (params: any) => {
+              const date = new Date(params[0].value[0]);
+              return `${date.toLocaleTimeString()} : ${params[0].value[1]} ms`;
+          }
+      },
+      xAxis: { 
+          type: 'time',
+          splitLine: { show: false }
+      },
       yAxis: { 
         type: 'value', 
         scale: true,
-        name: 'ms',
         splitLine: { show: true, lineStyle: { type: 'dashed', color: '#eee' } }
       },
       series: [{
-        data: [],
+        name: 'HRV',
         type: 'line',
-        smooth: true,
-        showSymbol: false,
+        showSymbol: true,
+        symbolSize: 4,
+        connectNulls: false, 
         lineStyle: { color: '#67C23A', width: 2 },
+        itemStyle: { color: '#67C23A' },
         areaStyle: {
-          color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+            color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
             { offset: 0, color: 'rgba(103,194,58,0.3)' },
             { offset: 1, color: 'rgba(103,194,58,0.05)' }
           ])
         },
-        animation: false
-      }]
+        data: []
+      }],
+      animation: false
     });
-  }
+};
+
+const onYAxisChange = (auto: boolean, min: number, max: number) => {
+    isAutoScaleY = auto;
+    manualYMin = min;
+    manualYMax = max;
+    updateChart();
 };
 
 const updateChart = () => {
-  if (chartInstance) {
-    if (!props.isInBed) return;
-    const points = hrvHistory.map(item => [item.time, item.value]);
+    if (!chartInstance) return;
+
+    const yAxisOption = isAutoScaleY ? {
+        scale: true,
+        min: null,
+        max: null
+    } : {
+        scale: false,
+        min: manualYMin,
+        max: manualYMax
+    };
+
     chartInstance.setOption({
-      series: [{ data: points }]
+        yAxis: yAxisOption,
+        series: [{ data: dataBuffer }]
     });
-  }
 };
 
-const getStressType = (level: string) => {
-  if (level === '低') return 'success';
-  if (level === '中') return 'warning';
-  return 'danger';
-};
-
-const handleResize = () => chartInstance?.resize();
-
-onMounted(() => {
-  initChart();
-  window.addEventListener('resize', handleResize);
-  
-  setupIPCListeners({
+// IPC Listeners
+setupIPCListeners({
     onHeartRate: (data: HeartRateData) => {
-      if (!props.isInBed) return;
-      
-      stressIndex.value = data.stress_index;
-      stressLevel.value = data.stress_level;
-      
-      if (data.hrv > 0) {
-        const now = Date.now();
-        hrvHistory.push({ time: now, value: data.hrv });
+        currentHRV.value = data.hrv;
+        stressIndex.value = data.stress_index;
         
-        if (hrvHistory.length > 300) hrvHistory.shift();
-        while(hrvHistory.length > 0 && now - hrvHistory[0].time > 300000) {
-          hrvHistory.shift();
-        }
-        updateChart();
-      }
-    }
-  });
-});
+        const now = new Date();
+        const timestamp = now.toISOString(); 
+        
+        const value = hasHuman.value ? data.hrv : null;
+        
+        dataBuffer.push({
+            name: timestamp,
+            value: [timestamp, value]
+        });
 
-onUnmounted(() => {
-  window.removeEventListener('resize', handleResize);
-  chartInstance?.dispose();
+        if (dataBuffer.length > MAX_HISTORY_POINTS) {
+            dataBuffer.shift();
+        }
+
+        updateChart();
+    },
+    onHumanCheck: (data: HumanCheckData) => {
+        hasHuman.value = data.has_human;
+    }
 });
 </script>
-
-<style scoped>
-.box-card { height: 100%; display: flex; flex-direction: column; }
-.card-header { display: flex; justify-content: space-between; align-items: center; }
-.title { font-weight: bold; font-size: 16px; }
-.chart-content { position: relative; height: 250px; }
-.metric-value { position: absolute; top: 0; left: 10px; z-index: 10; background: rgba(255,255,255,0.8); padding: 2px 5px; border-radius: 4px; }
-.number { font-size: 24px; font-weight: bold; color: #303133; }
-.unit { font-size: 12px; color: #909399; margin-left: 4px; }
-.chart-div { width: 100%; height: 100%; }
-</style>

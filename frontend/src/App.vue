@@ -9,8 +9,19 @@
     </el-header>
     
     <el-main class="app-main">
-      <div class="single-view">
-        <SCGCard :uid="uid" :is-in-bed="isInBed" />
+      <div class="dashboard-grid">
+        <div class="grid-item">
+            <SCGCard :isInBed="isInBed" />
+        </div>
+        <div class="grid-item">
+            <BreathCard :isInBed="isInBed" />
+        </div>
+        <div class="grid-item">
+            <HeartRateCard :isInBed="isInBed" />
+        </div>
+        <div class="grid-item">
+            <HRVCard :isInBed="isInBed" />
+        </div>
       </div>
     </el-main>
   </el-container>
@@ -19,6 +30,9 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue';
 import SCGCard from './components/SCGCard.vue';
+import BreathCard from './components/BreathCard.vue';
+import HeartRateCard from './components/HeartRateCard.vue';
+import HRVCard from './components/HRVCard.vue';
 import { setupIPCListeners, type HumanCheckData } from './utils/ipc';
 
 const uid = ref(0);
@@ -66,14 +80,25 @@ body {
 }
 
 .app-main {
-  padding: 20px;
+  padding: 10px;
   background-color: #f0f2f5;
   flex: 1;
   overflow: hidden;
 }
 
-.single-view {
-  height: 100%;
-  width: 100%;
+.dashboard-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr 1fr;
+    gap: 10px;
+    height: 100%;
+    width: 100%;
+}
+
+.grid-item {
+    height: 100%;
+    width: 100%;
+    min-height: 0; /* Prevent overflow */
+    min-width: 0;
 }
 </style>
