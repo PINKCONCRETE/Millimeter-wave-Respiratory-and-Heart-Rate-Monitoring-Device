@@ -47,7 +47,7 @@
 
 ```mermaid
 graph TD
-    A[TI AWR1843 雷达] -->|UART 串口| B(Python 后端)
+    A[TI AWR1843 雷达] -->|UART 串口| B[Python 后端]
     subgraph Backend [后端服务]
         B --> C{数据处理管线}
         C -->|FFT/峰值检测| D[呼吸 & 心率算法]
@@ -55,7 +55,7 @@ graph TD
         D --> F[SQLite 数据库]
         E --> F
     end
-    B -->|IPC (Named Pipes)| G(Electron 前端)
+    B -->|IPC Named Pipes| G[Electron 前端]
     subgraph Frontend [可视化界面]
         G --> H[Vue 3 组件库]
         H --> I[ECharts 实时渲染]
