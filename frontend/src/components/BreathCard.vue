@@ -36,13 +36,13 @@ const statsList = computed(() => [
 
 // Chart state
 let chartInstance: echarts.ECharts | null = null;
-const SAMPLING_RATE = 20; // 20Hz for Breath
-const BUFFER_LIMIT = 2000; // 100 seconds buffer
+const SAMPLING_RATE = 200; // 200Hz for Breath
+const BUFFER_LIMIT = 20000; // 100 seconds buffer
 let dataBuffer: number[] = [];
 let pendingData: number[] = [];
 
 // Display control
-let currentWindowPoints = 400; // Default 20s * 20Hz
+let currentWindowPoints = 4000; // Default 20s * 200Hz
 let isAutoScaleY = true;
 let manualYMin = -1.0;
 let manualYMax = 1.0;
