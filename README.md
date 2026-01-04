@@ -1,9 +1,6 @@
 <div align="center">
   <h1>Millimeter-wave Respiratory and Heart Rate Monitoring Device</h1>
-  <h3>毫米波非接触式生命体征监测系统</h3>
-  <p>
-    <strong>基于 TI AWR1843 雷达的高精度生命体征监测平台</strong>
-  </p>
+  <h1>毫米波非接触式生命体征监测系统</h1>
 
   <p>
     <a href="#-功能特性">功能特性</a> •
