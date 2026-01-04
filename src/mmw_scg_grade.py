@@ -130,6 +130,7 @@ class SCGGradeProcess(multiprocessing.Process):
     MAX_BUFFER_SIZE = int(SAMPLING_RATE * WINDOW_SECONDS) # 5秒窗口
     OUTLIER_THRESHOLD = 1500
     TIME_STEP = 0.005
+    DIFFERENTIAL_WEIGHT = 16.0  # 差分公式分母权重
 
     def __init__(
         self,
@@ -345,6 +346,36 @@ class SCGGradeProcess(multiprocessing.Process):
         except Exception as e:
             print(f"Advanced Denoising Failed: {e}")
             return raw_scg
+        计算整个波形的7点加权二阶导数.
+
+        使用7点中心差分公式计算二阶导数：
+        f''(x) ≈ [4f(x) + f(x+1) + f(x-1) - 2f(x+2) - 2f(x-2) - f(x+3) - f(x-3)] / (16h²)
+
+        对于边界点（前3个和后3个），保持为0。
+        """
+        unwrapped_phase = np.unwrap(phase_data)
+        n = unwrapped_phase.shape[0]
+        h_squared = self.TIME_STEP ** 2
+
+        # 初始化结果数组为0
+        result = np.zeros_like(unwrapped_phase)
+
+        # 计算可以应用7点公式的范围（排除边界3个点）
+        length = n - 6
+        
+        if length <= 0:
+            return result
+
+        # 使用向量化计算中间部分的二阶导数
+        # 中心点从索引3到n-4
+        result[3:length+3] = (
+            unwrapped_phase[3:length+3] * 4.0 +
+            (unwrapped_phase[4:length+4] + unwrapped_phase[2:length+2]) -
+            2.0 * (unwrapped_phase[5:length+5] + unwrapped_phase[1:length+1]) -
+            (unwrapped_phase[6:length+6] + unwrapped_phase[:length])
+        ) / (self.DIFFERENTIAL_WEIGHT * h_squared)
+
+        return result
 
     def _compute_score_and_fft(self, signal: np.ndarray) -> tuple[float, np.ndarray, int]:
         """计算信号评分与FFT."""
@@ -436,7 +467,12 @@ class SCGGradeProcess(multiprocessing.Process):
         outlier_idx = np.abs(scg_waveform) > self.OUTLIER_THRESHOLD
         scg_waveform[outlier_idx] = 0.0
         
-        latest_value = scg_waveform[-1] # Use last value
+        # 由于使用7点差分，最右侧3个点是无效的(为0)
+        # 因此我们需要取倒数第4个点作为最新的有效数据
+        if len(scg_waveform) >= 4:
+            latest_value = scg_waveform[-4] 
+        else:
+            latest_value = 0.0
             
         result = {
             "type": "scg_data",
