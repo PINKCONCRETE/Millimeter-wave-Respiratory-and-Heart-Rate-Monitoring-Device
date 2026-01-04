@@ -11,10 +11,40 @@
     @window-change="onWindowChange"
     @y-axis-change="onYAxisChange"
   >
-    <!-- <template #stats-extra>
-        <el-tag size="small" type="primary">Bin: {{ currentBin }}</el-tag>
-        <el-tag size="small" type="primary" style="margin-left: 8px">Score: {{ currentScore.toFixed(1) }}</el-tag>
-    </template> -->
+    <template #stats-extra>
+        <div class="limit-controls" style="display: flex; align-items: center; gap: 8px; margin-right: 16px;">
+            <el-switch
+                v-model="isLimitEnabled"
+                size="small"
+                active-text="Limit"
+                inline-prompt
+                @change="onLimitChange"
+            />
+            <div v-if="isLimitEnabled" style="display: flex; align-items: center; gap: 4px;">
+                <el-input-number 
+                    v-model="limitMin" 
+                    size="small" 
+                    :step="0.1" 
+                    controls-position="right" 
+                    style="width: 70px" 
+                    placeholder="Min"
+                    @change="onLimitChange"
+                />
+                <span style="color: #909399;">-</span>
+                <el-input-number 
+                    v-model="limitMax" 
+                    size="small" 
+                    :step="0.1" 
+                    controls-position="right" 
+                    style="width: 70px" 
+                    placeholder="Max"
+                    @change="onLimitChange"
+                />
+            </div>
+        </div>
+        <!-- <el-tag size="small" type="primary">Bin: {{ currentBin }}</el-tag>
+        <el-tag size="small" type="primary" style="margin-left: 8px">Score: {{ currentScore.toFixed(1) }}</el-tag> -->
+    </template>
   </BaseChartCard>
 </template>
 
@@ -54,6 +84,15 @@ let currentWindowPoints = 4000; // Default 20s * 200Hz
 let isAutoScaleY = true;
 let manualYMin = -1.0;
 let manualYMax = 1.0;
+
+// Limit control
+const isLimitEnabled = ref(false);
+const limitMin = ref(-0.5);
+const limitMax = ref(0.5);
+
+const onLimitChange = () => {
+    hasNewData = true;
+};
 
 // Render loop
 let animationFrameId: number | null = null;
@@ -146,7 +185,13 @@ const renderLoop = () => {
 
   if ((hasNewData || !isAutoScaleY) && chartInstance) {
     if (props.isInBed) {
-        const displayData = dataBuffer.slice(-currentWindowPoints);
+        let displayData = dataBuffer.slice(-currentWindowPoints);
+
+        // Apply limit filter if enabled
+        if (isLimitEnabled.value) {
+            displayData = displayData.map(v => (v > limitMax.value || v < limitMin.value) ? 0 : v);
+        }
+
         const xData = Array.from({ length: displayData.length }, (_, i) => i);
         
         const yAxisOption = isAutoScaleY ? {
@@ -159,13 +204,46 @@ const renderLoop = () => {
             max: manualYMax
         };
 
+        const seriesObj: any = {
+            data: displayData,
+            type: 'line',
+            smooth: true,
+            showSymbol: false,
+            lineStyle: { color: '#E6A23C', width: 2 },
+            areaStyle: {
+                color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                { offset: 0, color: 'rgba(230,162,60,0.3)' },
+                { offset: 1, color: 'rgba(230,162,60,0.05)' }
+                ])
+            },
+            animation: false
+        };
+
+        if (isLimitEnabled.value) {
+            seriesObj.markLine = {
+                symbol: ['none', 'none'],
+                label: { show: false },
+                lineStyle: {
+                    color: '#909399',
+                    type: 'dashed',
+                    width: 1,
+                    opacity: 0.5
+                },
+                data: [
+                    { yAxis: limitMax.value },
+                    { yAxis: limitMin.value }
+                ],
+                animation: false
+            };
+        }
+
         chartInstance.setOption({
             xAxis: { 
                 data: xData,
                 max: currentWindowPoints
             },
             yAxis: yAxisOption,
-            series: [{ data: displayData }]
+            series: [seriesObj]
         });
     } else {
         // Clear chart when not in bed
