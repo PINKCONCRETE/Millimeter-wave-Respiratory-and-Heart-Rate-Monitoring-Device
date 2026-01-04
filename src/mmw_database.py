@@ -9,12 +9,11 @@ from queue import Empty, Queue
 
 import numpy as np
 
-backend_path = Path(__file__).parent.parent / "backend"
-sys.path.insert(0, str(backend_path))
+from src.config import DATABASE_FILENAME
+from src.models import db, UserWaveform, HeartData, HRVData, BreathData
+
 
 from flask import Flask
-from backend.models import db, UserWaveform, HeartData, HRVData, BreathData
-
 
 class KalmanFilter:
     """一维卡尔曼滤波器，用于心率数据平滑."""
@@ -56,7 +55,7 @@ class KalmanFilter:
 class UnifiedDatabaseWriter(threading.Thread):
     """统一数据库写入器 - 串行处理所有数据库写入."""
     
-    def __init__(self, uid: int = 0, database_path: str | None = None):
+    def __init__(self, uid: int = 0, database_path: str = None):
         super().__init__(daemon=True)
         self._uid = uid
         self._queue = Queue(maxsize=2000)  # 统一写入队列
@@ -103,7 +102,7 @@ class UnifiedDatabaseWriter(threading.Thread):
         # 初始化数据库
         self._app = Flask(__name__)
         if database_path is None:
-            database_path = str(Path(__file__).parent.parent / 'database' / 'mmw_monitor.db')
+            database_path = str(Path(__file__).parent.parent / 'database' / DATABASE_FILENAME)
         os.makedirs(os.path.dirname(database_path), exist_ok=True)
         self._app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{database_path}'
         self._app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False

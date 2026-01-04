@@ -26,7 +26,7 @@ from src.mmw_database import (
 class RadarBroadcaster(threading.Thread):
     """雷达数据广播器 - 将数据复制到多个队列(带降采样)."""
     
-    def __init__(self, input_queue: Queue, output_queues: list[Queue], downsample_ratios: list[int] | None = None):
+    def __init__(self, input_queue: Queue, output_queues: list[Queue], downsample_ratios: list = None):
         super().__init__(daemon=True)
         self._input = input_queue
         self._outputs = output_queues

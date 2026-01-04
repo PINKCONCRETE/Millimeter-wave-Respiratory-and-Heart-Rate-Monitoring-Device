@@ -1,47 +1,124 @@
+"""SCG评分与自相关分析处理模块.
+
+专注于单通道（最大能量Bin）的SCG提取，并计算其自相关函数。
+同时进行周期分割与相似度矩阵计算。
+"""
+import multiprocessing
+import time
+from collections import deque
+from queue import Empty
+from typing import Any
+
 import numpy as np
 from scipy.signal import butter, filtfilt
-from src.mmw_processor import MMWProcessorThread
 
-class SCGGradeProcessor(MMWProcessorThread):
-    """SCG评分与自相关分析处理线程.
+
+class SCGGradeProcess(multiprocessing.Process):
+    """SCG评分与自相关分析处理进程."""
     
-    专注于单通道（最大能量Bin）的SCG提取，并计算其自相关函数。
-    同时进行周期分割与相似度矩阵计算。
-    """
-    
-    # 滤波参数 (复用 mmw_heart_rate.py)
+    # 滤波参数
     SAMPLING_RATE = 200
     LOWCUT = 20
     HIGHCUT = 40
     FILTER_ORDER = 4
+    
+    # 缓冲区参数
+    MIN_BUFFER_SIZE = 200 # 至少需要1秒数据
+    MAX_BUFFER_SIZE = 1000
+    OUTLIER_THRESHOLD = 1500
+    TIME_STEP = 0.005
+
+    def __init__(
+        self,
+        input_queue: multiprocessing.Queue,
+        output_queue: Any = None,
+        channel_num: int = 8,
+        bins_per_channel: int = 10,
+    ) -> None:
+        super().__init__()
+        self.daemon = True
+        self._input_queue = input_queue
+        self._output_queue = output_queue or multiprocessing.Queue()
+        self._channel_num = channel_num
+        self._bins_per_channel = bins_per_channel
+        self._stop_event = multiprocessing.Event()
+
+    def run(self) -> None:
+        print("SCG评分进程已启动...")
+        self._frame_buffer = deque(maxlen=self.MAX_BUFFER_SIZE)
+        self._current_frame_build = None
+        self._completed_frames = 0
+        self._generated_scg_points = 0
+        self._current_max_bin = 0
+        
+        try:
+            while not self._stop_event.is_set():
+                try:
+                    frame_data = self._input_queue.get(timeout=1.0)
+                    self._process_single_frame(frame_data)
+                except Empty:
+                    continue
+                except Exception as e:
+                    print(f"SCG评分进程异常: {e}")
+        finally:
+            print("SCG评分进程已停止")
+
+    def stop(self) -> None:
+        self._stop_event.set()
+
+    def _process_single_frame(self, frame_data: dict[str, Any]) -> None:
+        channel_id = frame_data.get("channel_id")
+        data = frame_data.get("data")
+        
+        if channel_id is None or data is None:
+            return
+            
+        if not isinstance(data, np.ndarray):
+            data = np.array(data, dtype=complex)
+            
+        if channel_id == 0:
+            self._current_frame_build = np.zeros((self._channel_num, self._bins_per_channel), dtype=complex)
+            self._current_frame_build[channel_id] = data
+            # Update offset if needed
+            self._current_offset = frame_data.get("offset", 0)
+        elif self._current_frame_build is not None:
+            self._current_frame_build[channel_id] = data
+        else:
+            return
+            
+        if channel_id == self._channel_num - 1 and self._current_frame_build is not None:
+            self._completed_frames += 1
+            self._frame_buffer.append(self._current_frame_build.copy())
+            
+            # 生成新的SCG点
+            if len(self._frame_buffer) >= self.MIN_BUFFER_SIZE:
+                self._generate_new_scg_point()
+
+    def _extract_phase(self, fft_data: np.ndarray, bin_idx: int) -> np.ndarray:
+        """提取指定bin的相位数据."""
+        # fft_data shape: (N, channel_num, bins_per_channel)
+        # Sum across channels to improve SNR? Or just take one channel?
+        # Typically SCG might use the channel with best signal.
+        # Here we follow simple logic: sum complex data then angle
+        complex_sum = np.sum(fft_data[:, :, bin_idx], axis=1)
+        return np.angle(complex_sum)
+
+    def _compute_derivative_waveform(self, phase_data: np.ndarray) -> np.ndarray:
+        """计算相位差分（近似导数）."""
+        unwrapped_phase = np.unwrap(phase_data)
+        # 简单一阶差分
+        return np.diff(unwrapped_phase, prepend=unwrapped_phase[0])
 
     def _compute_score_and_fft(self, signal: np.ndarray) -> tuple[float, np.ndarray, int]:
-        """计算信号评分和FFT频谱.
-        
-        Returns:
-            (score, fft_magnitude, n_fft)
-        """
-        # 去除直流分量
         fft_signal = signal - np.mean(signal)
-        # 加窗 (Hanning window)
         window = np.hanning(len(fft_signal))
-        
-        # 使用补零增加FFT点数到4096，获得更平滑的频谱
         n_fft = 4096
         fft_result = np.fft.fft(fft_signal * window, n=n_fft)
-        
-        # 取模值
-        fft_magnitude = np.abs(fft_result)
-        # 只取正频率部分 (N/2)
-        fft_magnitude = fft_magnitude[:n_fft//2]
-        # 归一化
+        fft_magnitude = np.abs(fft_result)[:n_fft//2]
         if len(fft_signal) > 0:
             fft_magnitude = fft_magnitude / len(fft_signal) * 2
-
-        # 计算信号质量分数 (20Hz以下能量占比)
+            
         idx_20hz = int(20 * n_fft / 200)
-        
-        # 计算能量谱 (幅度的平方)
         energy_spectrum = fft_magnitude ** 2
         total_energy = np.sum(energy_spectrum)
         
@@ -53,47 +130,27 @@ class SCGGradeProcessor(MMWProcessorThread):
         return score, fft_magnitude, n_fft
 
     def _generate_new_scg_point(self) -> None:
-        """生成新的SCG点及自相关数据."""
-        if len(self._frame_buffer) < self.MIN_BUFFER_SIZE:
-            return
-
-        # 转换为numpy数组
         fft_data = np.array(self._frame_buffer)
         
-        # 寻找最佳Bin (基于评分，带滞后逻辑)
-        # 如果当前没有选中的Bin，或者_current_max_bin无效，则默认为0
         current_selected_bin = self._current_max_bin if 0 <= self._current_max_bin < self._bins_per_channel else 0
-        
         best_bin_idx = 0
         max_score = -1.0
-        
-        # 存储所有Bin的计算结果，以便后续根据选择直接获取
-        # 格式: {bin_idx: (score, scg_waveform, fft_mag, n_fft)}
         bin_results = {}
         
-        # 遍历所有Bin计算评分
         for bin_idx in range(self._bins_per_channel):
-             # 提取相位 -> SCG
              phase_data = self._extract_phase(fft_data, bin_idx)
              scg_waveform = self._compute_derivative_waveform(phase_data)
              
-             # 过滤异常值
              outlier_idx = np.abs(scg_waveform) > self.OUTLIER_THRESHOLD
              scg_waveform[outlier_idx] = 0.0
              
-             # 计算评分
              score, fft_mag, n_fft = self._compute_score_and_fft(scg_waveform)
-             
              bin_results[bin_idx] = (score, scg_waveform, fft_mag, n_fft)
              
-             # 记录全局最高分
              if score > max_score:
                  max_score = score
                  best_bin_idx = bin_idx
         
-        # 滞后逻辑：
-        # 只有当全局最高分比当前选中Bin的分数高出阈值(0.05)时，才切换Bin
-        # 否则保持当前Bin不变
         current_bin_score = bin_results[current_selected_bin][0]
         HYSTERESIS_THRESHOLD = 0.05
         
@@ -102,201 +159,38 @@ class SCGGradeProcessor(MMWProcessorThread):
         else:
             final_bin_idx = current_selected_bin
             
-        # 使用最终选择的Bin的数据
         score, scg_waveform, fft_magnitude, n_fft = bin_results[final_bin_idx]
         self._current_max_bin = final_bin_idx
-        max_bin_idx = final_bin_idx # 兼容变量名
         
-        # 取最新的SCG值（用于滚动显示）
-        latest_value = scg_waveform[-4]
-
-        # 5. 计算自相关函数 (基于当前1000点的窗口)
-        # 标准化
+        latest_value = scg_waveform[-1] # Use last value
+        
+        # Autocorrelation
         signal = scg_waveform
         if np.std(signal) > 1e-6:
             signal_norm = (signal - np.mean(signal)) / np.std(signal)
         else:
             signal_norm = signal - np.mean(signal)
-
-        # 计算自相关
-        # mode='full' 返回长度为 2*N - 1
+            
         corr = np.correlate(signal_norm, signal_norm, mode='full')
-        # 取正半轴 (lag >= 0)
         corr = corr[len(corr)//2:]
-        # 归一化 (使得 lag=0 时为 1)
         if len(signal_norm) > 0:
             corr = corr / len(signal_norm)
-
-        # 6. 计算FFT
-        # (已在循环中计算最佳Bin的FFT)
-        # 7. 计算信号质量分数 (20Hz以下能量占比)
-        # (已在循环中计算)
-
-        # 8. 周期分割与互相关矩阵计算
-        corr_matrix = []
-        if self._generated_scg_points % 20 == 0: # 每20帧(0.1s)计算一次，避免过高负载
-             corr_matrix = self._compute_cycle_correlation_matrix(scg_waveform)
-
-        # 构造输出
+            
         result = {
+            "type": "scg_data",
             "frame_idx": self._generated_scg_points,
+            "scg_waveform": scg_waveform.tolist(), # Send the waveform buffer
+            "isArrhythmia": 0, # Placeholder, logic to be implemented or retrieved
             "scg_value": float(latest_value),
             "autocorrelation": corr.tolist(),
             "fft_magnitude": fft_magnitude.tolist(),
             "timestamp": self._generated_scg_points * self.TIME_STEP,
-            "max_bin": max_bin_idx,
+            "max_bin": final_bin_idx,
             "offset": self._current_offset,
-            "n_fft": n_fft, # 传递FFT点数
-            "score": score,  # 信号质量分数
-            "corr_matrix": corr_matrix # 互相关矩阵
+            "n_fft": n_fft,
+            "score": score,
         }
         
-        self._output_queue.put(result)
+        if not self._output_queue.full():
+            self._output_queue.put(result)
         self._generated_scg_points += 1
-
-    def _compute_cycle_correlation_matrix(self, scg_data: np.ndarray) -> list[list[float]]:
-        """计算周期互相关矩阵.
-        
-        1. 带通滤波 (20-40Hz)
-        2. 峰值检测
-        3. 切片与重采样
-        4. 计算相关系数矩阵
-        """
-        # 1. 预处理与滤波
-        try:
-            # 归一化
-            max_val = np.max(np.abs(scg_data))
-            if max_val == 0: return []
-            norm_data = scg_data / max_val
-            
-            # 滤波
-            b, a = butter(
-                self.FILTER_ORDER,
-                [self.LOWCUT / (self.SAMPLING_RATE / 2), self.HIGHCUT / (self.SAMPLING_RATE / 2)],
-                btype='band',
-                analog=False
-            )
-            filtered_data = filtfilt(b, a, norm_data)
-            
-            # 再次归一化
-            max_val = np.max(np.abs(filtered_data))
-            if max_val == 0: return []
-            filtered_data = filtered_data / max_val
-            
-        except Exception:
-            return []
-
-        # 2. 峰值检测 (复用 heart_rate_old 逻辑)
-        peaks = self._detect_peaks_multistep(filtered_data)
-        if len(peaks) < 3: # 至少需要3个峰才能形成2个完整周期
-            return []
-            
-        # 3. 切片与重采样
-        segments = []
-        target_length = 100 # 统一重采样到100点
-        
-        # 使用峰值间的数据作为周期
-        for i in range(len(peaks) - 1):
-            start = peaks[i]
-            end = peaks[i+1]
-            
-            # 简单的异常周期过滤 (50bpm -> 240点, 150bpm -> 80点)
-            # 既然是SCG，可能包含更多高频成分，这里放宽一点
-            if end - start < 40 or end - start > 300:
-                continue
-                
-            # 提取原始SCG数据片段 (注意：使用原始SCG还是滤波后的？通常原始波形包含更多形态信息)
-            # 这里我们使用原始SCG数据(scg_data)进行形态比较
-            segment = scg_data[start:end]
-            
-            # 重采样
-            x_old = np.linspace(0, 1, len(segment))
-            x_new = np.linspace(0, 1, target_length)
-            segment_resampled = np.interp(x_new, x_old, segment)
-            
-            # 归一化片段 (去除幅度差异，只比形状)
-            seg_mean = np.mean(segment_resampled)
-            seg_std = np.std(segment_resampled)
-            if seg_std > 1e-6:
-                segment_resampled = (segment_resampled - seg_mean) / seg_std
-            else:
-                segment_resampled = segment_resampled - seg_mean
-                
-            segments.append(segment_resampled)
-            
-        if len(segments) < 2:
-            return []
-            
-        # 4. 计算相关系数矩阵
-        n_segs = len(segments)
-        matrix = np.zeros((n_segs, n_segs))
-        
-        for i in range(n_segs):
-            for j in range(n_segs):
-                # Pearson correlation
-                # 由于已经归一化 (mean=0, std=1)，corr = mean(a * b)
-                corr = np.mean(segments[i] * segments[j])
-                matrix[i, j] = corr
-                
-        return matrix.tolist()
-
-    def _detect_peaks_multistep(self, filtered_data: np.ndarray) -> np.ndarray:
-        """多步骤峰值检测算法 (复用自 mmw_heart_rate.py)."""
-        sample_points = len(filtered_data)
-        y = filtered_data
-        
-        # 第一步：找到所有局部最大值
-        peak_indices_1 = []
-        if sample_points > 1:
-            if y[0] > y[1]: peak_indices_1.append(0)
-            for i in range(1, sample_points - 1):
-                if y[i] >= y[i-1] and y[i] >= y[i+1]:
-                    peak_indices_1.append(i)
-            if y[sample_points-2] < y[sample_points-1]:
-                peak_indices_1.append(sample_points-1)
-        
-        if len(peak_indices_1) < 2: return np.array([])
-
-        # 第二步：在局部最大值中找更大的峰值
-        peak_indices_2 = []
-        if len(peak_indices_1) >= 2:
-            if y[peak_indices_1[0]] > y[peak_indices_1[1]]:
-                peak_indices_2.append(peak_indices_1[0])
-            for i in range(1, len(peak_indices_1) - 1):
-                index = peak_indices_1[i]
-                index_b = peak_indices_1[i - 1]
-                index_a = peak_indices_1[i + 1]
-                if y[index] >= y[index_b] and y[index] >= y[index_a]:
-                    peak_indices_2.append(index)
-            if y[peak_indices_1[-2]] < y[peak_indices_1[-1]]:
-                peak_indices_2.append(peak_indices_1[-1])
-
-        # 第三步：筛选满足阈值的峰值
-        peak_indices_3 = []
-        for index in peak_indices_2:
-            if y[index] >= 0.3:
-                peak_indices_3.append(index)
-        
-        if len(peak_indices_3) < 2: return np.array([])
-
-        # 第四步：合并间隔1-40的峰值
-        peak_indices_4 = []
-        j = 0
-        while j < len(peak_indices_3) - 1:
-            index = peak_indices_3[j]
-            index_a = peak_indices_3[j + 1]
-            if 1 <= index_a - index <= 40:
-                if y[index_a] >= y[index]: select_index = index_a
-                else: select_index = index
-                j += 1
-                peak_indices_4.append(select_index)
-            else:
-                peak_indices_4.append(index)
-            j += 1
-        
-        if len(peak_indices_3) > 0 and (not peak_indices_4 or peak_indices_3[-1] != peak_indices_4[-1]):
-             # 简单处理最后一个点逻辑，确保不漏
-             if len(peak_indices_4) == 0 or peak_indices_3[-1] - peak_indices_4[-1] > 40:
-                 peak_indices_4.append(peak_indices_3[-1])
-
-        return np.array(peak_indices_4)
