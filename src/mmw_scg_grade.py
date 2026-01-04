@@ -10,7 +10,8 @@ from queue import Empty
 from typing import Any
 
 import numpy as np
-from scipy.signal import butter, filtfilt, find_peaks
+import pywt
+from scipy.signal import butter, filtfilt, find_peaks, correlate
 
 # Parameters adapted for 200Hz sampling rate
 PARAMS_OPTIMIZED = {
@@ -217,11 +218,113 @@ class SCGGradeProcess(multiprocessing.Process):
         complex_sum = np.sum(fft_data[:, :, bin_idx], axis=1)
         return np.angle(complex_sum)
 
+    def _generate_scg_template(self) -> np.ndarray:
+        """
+        生成标准 SCG 心跳模板用于匹配滤波.
+        模拟 AO (主动脉开启) 和 AC (主动脉关闭) 的双峰结构.
+        """
+        fs = self.SAMPLING_RATE
+        duration = 0.6 # 秒
+        t = np.linspace(0, duration, int(fs * duration))
+        
+        # 模拟参数
+        # AO Peak: 高频、高幅 (约10-15Hz)
+        ao_center = 0.15
+        ao_sigma = 0.025
+        ao_freq = 12.0
+        ao_wave = 1.0 * np.exp(-((t - ao_center)**2) / (2 * ao_sigma**2)) * np.cos(2 * np.pi * ao_freq * (t - ao_center))
+        
+        # AC Peak: 较低频、中幅 (约8-10Hz), 延迟约 250-300ms
+        ac_center = 0.40
+        ac_sigma = 0.035
+        ac_freq = 8.0
+        ac_wave = 0.6 * np.exp(-((t - ac_center)**2) / (2 * ac_sigma**2)) * np.cos(2 * np.pi * ac_freq * (t - ac_center))
+        
+        template = ao_wave + ac_wave
+        
+        # 去均值，保证模板无直流分量
+        template = template - np.mean(template)
+        
+        return template
+
+    def _apply_matched_filter(self, signal: np.ndarray) -> np.ndarray:
+        """
+        应用匹配滤波器 (Matched Filter).
+        原理：将信号与已知的 SCG 模板进行互相关，最大化信噪比.
+        """
+        if len(signal) < self.SAMPLING_RATE:
+            return signal
+            
+        template = self._generate_scg_template()
+        
+        # 使用互相关 (Correlation)
+        # mode='same' 保持长度一致
+        filtered = correlate(signal, template, mode='same')
+        
+        # 归一化处理，保留原始信号的幅度比例不太容易，这里主要关注波形
+        # 我们可以将其缩放到与原始信号相似的能量水平
+        if np.std(filtered) > 1e-6:
+             filtered = filtered / np.std(filtered) * np.std(signal)
+             
+        return filtered
+
     def _compute_derivative_waveform(self, phase_data: np.ndarray) -> np.ndarray:
-        """计算相位差分（近似导数）."""
+        """
+        计算相位差分并进行小波去噪 (Wavelet Denoising) + 匹配滤波 (Matched Filter).
+        1. 小波变换: 分离呼吸（低频）和肌电噪声（高频）。
+        2. 匹配滤波: 利用 SCG 模板增强心跳特征。
+        """
         unwrapped_phase = np.unwrap(phase_data)
-        # 简单一阶差分
-        return np.diff(unwrapped_phase, prepend=unwrapped_phase[0])
+        
+        # 1. 差分获取原始SCG信号
+        raw_scg = np.diff(unwrapped_phase, prepend=unwrapped_phase[0])
+        
+        # 2. 小波分解 (Wavelet Decomposition)
+        # fs = 200Hz. Nyquist = 100Hz.
+        # Level 8 decomposition using 'sym8'
+        # Approx: 0-0.39 Hz (Respiration)
+        
+        w_family = 'sym8'
+        try:
+            max_level = pywt.dwt_max_level(len(raw_scg), pywt.Wavelet(w_family).dec_len)
+            level = min(8, max_level)
+            
+            if level < 4:
+                return raw_scg # Not enough data points
+                
+            coeffs = pywt.wavedec(raw_scg, w_family, level=level)
+            
+            # Reset coefficients (reconstruct only desired bands)
+            
+            # Zero out Approximation (Low freq / Respiration)
+            # 这实际上利用了已知的呼吸频段信息进行去除
+            coeffs[0] = np.zeros_like(coeffs[0]) 
+            
+            # Zero out very low freq details if level is high enough
+            if level >= 8:
+                 coeffs[1] = np.zeros_like(coeffs[1]) # D8 (0.39-0.78Hz)
+            
+            # Zero out high freq details (Muscle Noise)
+            if len(coeffs) >= 3:
+                coeffs[-1] = np.zeros_like(coeffs[-1]) # D1
+                coeffs[-2] = np.zeros_like(coeffs[-2]) # D2
+            
+            # Reconstruct
+            clean_scg = pywt.waverec(coeffs, w_family)
+            
+            # Trim to original length
+            if len(clean_scg) > len(raw_scg):
+                clean_scg = clean_scg[:len(raw_scg)]
+            
+            # 3. 匹配滤波 (Matched Filter)
+            # 使用预定义的 SCG 模板增强信号
+            matched_scg = self._apply_matched_filter(clean_scg)
+                
+            return matched_scg
+            
+        except Exception as e:
+            print(f"Advanced Denoising Failed: {e}")
+            return raw_scg
 
     def _compute_score_and_fft(self, signal: np.ndarray) -> tuple[float, np.ndarray, int]:
         """计算信号评分与FFT."""

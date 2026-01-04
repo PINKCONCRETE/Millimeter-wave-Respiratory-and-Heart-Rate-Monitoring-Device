@@ -4,3 +4,4 @@ pyserial>=3.5
 flask>=2.2.0
 flask-sqlalchemy>=3.0.0
 sqlalchemy>=2.0.0
+PyWavelets>=1.4.0
