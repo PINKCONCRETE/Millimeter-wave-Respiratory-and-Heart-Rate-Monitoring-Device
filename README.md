@@ -33,6 +33,10 @@
 - **💓 SCG 心震图分析**: 实时提取并可视化心震图波形，提供更丰富的心脏机械活动信息。
 - **🫁 呼吸追踪**: 实时监测呼吸波形、呼吸率，并支持呼吸暂停事件检测。
 - **📊 高精度心率**: 采用 **卡尔曼滤波 (Kalman Filter)** 算法平滑心率数据，并支持 HRV (SDNN) 分析。
+- **🧠 核心算法 (New)**:
+  - **自适应呼吸干扰抵消**: 引入 **OLS (最小二乘)** 算法，主动构建呼吸干扰子空间（基波+谐波+导数）并进行正交投影消除，有效解决呼吸拍频效应。
+  - **Savitzky-Golay 微分**: 采用 31 点 3 阶多项式拟合求导，替代传统差分，在保留 SCG 峰值特征的同时大幅抑制高频噪声。
+  - **匹配滤波**: 基于生理学模型 (AO/AC 峰) 的模板匹配，进一步增强微弱的心震信号。
 - **🛡️ 智能状态检测**:
   - **在床/离床检测**: 自动识别用户是否在监测范围内。
   - **异常报警**: 实时检测并标记异常的生命体征数据。
@@ -154,6 +158,20 @@ npm run electron:dev
 ## 🤝 参与贡献
 
 欢迎提交 Issue 或 Pull Request 来改进本项目！
+
+## 📚 参考文献 (References)
+
+本项目的核心算法参考了以下学术文献与前沿研究：
+
+1.  **SCG & Vital Sign Detection via mmWave Radar**:
+    *   *Wang, Y., et al. "A high precision vital signs detection method based on millimeter wave radar." Scientific Reports 14 (2024).* (DR-MUSIC algorithm for harmonic suppression)
+    *   *Li, Z., et al. "Non-contact vital sign monitoring via FMCW radar." IEEE Sensors Journal.*
+
+2.  **Adaptive Interference Cancellation**:
+    *   *Widrow, B., et al. "Adaptive noise cancelling: Principles and applications." Proceedings of the IEEE 63.12 (1975): 1692-1716.* (Theoretical foundation of OLS/LMS cancellation)
+
+3.  **Signal Processing**:
+    *   *Savitzky, A., & Golay, M. J. "Smoothing and differentiation of data by simplified least squares procedures." Analytical chemistry 36.8 (1964): 1627-1639.*
 
 ## 📄 开源协议
 
