@@ -220,29 +220,37 @@ class SCGGradeProcess(multiprocessing.Process):
 
     def _generate_scg_template(self) -> np.ndarray:
         """
-        生成标准 SCG 心跳模板用于匹配滤波.
-        模拟 AO (主动脉开启) 和 AC (主动脉关闭) 的双峰结构.
+        生成高精度 SCG (加速度) 心跳模板.
+        基于文献模型 (e.g., IEEE T-BME, EMBC) 优化参数.
+        fs = 200Hz
         """
         fs = self.SAMPLING_RATE
         duration = 0.6 # 秒
         t = np.linspace(0, duration, int(fs * duration))
         
-        # 模拟参数
-        # AO Peak: 高频、高幅 (约10-15Hz)
-        ao_center = 0.15
-        ao_sigma = 0.025
-        ao_freq = 12.0
+        # 优化后的参数 (基于加速度信号)
+        # AO Peak (Aortic Opening):
+        #   - 频率: 较高 (25-35Hz)
+        #   - 位置: ~0.1s (相对于R峰，这里相对于模板开始)
+        #   - 幅度: 1.0 (归一化基准)
+        ao_center = 0.12
+        ao_sigma = 0.015 # 锐利的峰
+        ao_freq = 30.0
         ao_wave = 1.0 * np.exp(-((t - ao_center)**2) / (2 * ao_sigma**2)) * np.cos(2 * np.pi * ao_freq * (t - ao_center))
         
-        # AC Peak: 较低频、中幅 (约8-10Hz), 延迟约 250-300ms
-        ac_center = 0.40
-        ac_sigma = 0.035
-        ac_freq = 8.0
-        ac_wave = 0.6 * np.exp(-((t - ac_center)**2) / (2 * ac_sigma**2)) * np.cos(2 * np.pi * ac_freq * (t - ac_center))
+        # AC Peak (Aortic Closing):
+        #   - 频率: 较低 (10-15Hz)
+        #   - 位置: AO后约 280-320ms (LVET) -> 0.12 + 0.30 = 0.42s
+        #   - 幅度: 0.6-0.8
+        ac_center = 0.42
+        ac_sigma = 0.025 # 较宽的峰
+        ac_freq = 12.0
+        ac_wave = 0.7 * np.exp(-((t - ac_center)**2) / (2 * ac_sigma**2)) * np.cos(2 * np.pi * ac_freq * (t - ac_center))
         
+        # 组合 AO + AC
         template = ao_wave + ac_wave
         
-        # 去均值，保证模板无直流分量
+        # 移除直流分量
         template = template - np.mean(template)
         
         return template
@@ -250,19 +258,16 @@ class SCGGradeProcess(multiprocessing.Process):
     def _apply_matched_filter(self, signal: np.ndarray) -> np.ndarray:
         """
         应用匹配滤波器 (Matched Filter).
-        原理：将信号与已知的 SCG 模板进行互相关，最大化信噪比.
         """
         if len(signal) < self.SAMPLING_RATE:
             return signal
             
         template = self._generate_scg_template()
         
-        # 使用互相关 (Correlation)
-        # mode='same' 保持长度一致
+        # 互相关
         filtered = correlate(signal, template, mode='same')
         
-        # 归一化处理，保留原始信号的幅度比例不太容易，这里主要关注波形
-        # 我们可以将其缩放到与原始信号相似的能量水平
+        # 能量归一化: 保持与原信号能量一致，避免幅度失真
         if np.std(filtered) > 1e-6:
              filtered = filtered / np.std(filtered) * np.std(signal)
              
@@ -270,19 +275,28 @@ class SCGGradeProcess(multiprocessing.Process):
 
     def _compute_derivative_waveform(self, phase_data: np.ndarray) -> np.ndarray:
         """
-        计算相位差分并进行小波去噪 (Wavelet Denoising) + 匹配滤波 (Matched Filter).
-        1. 小波变换: 分离呼吸（低频）和肌电噪声（高频）。
-        2. 匹配滤波: 利用 SCG 模板增强心跳特征。
+        计算相位二阶差分 (加速度) 并进行小波去噪 + 匹配滤波.
+        
+        流程:
+        1. Phase -> Acceleration (2nd Derivative)
+        2. Wavelet Denoising (1-40Hz Bandpass)
+        3. Matched Filtering (AO/AC Template)
         """
         unwrapped_phase = np.unwrap(phase_data)
         
-        # 1. 差分获取原始SCG信号
-        raw_scg = np.diff(unwrapped_phase, prepend=unwrapped_phase[0])
+        # 1. 计算加速度 (Acceleration) - 使用双微分滤波器逻辑或简单的二阶差分
+        # 这里使用简单的二阶差分以保持高效，且与differentiator_filter_double类似效果
+        # np.diff(phase) -> Velocity
+        # np.diff(velocity) -> Acceleration
+        # padding以保持长度
+        velocity = np.diff(unwrapped_phase, prepend=unwrapped_phase[0])
+        acceleration = np.diff(velocity, prepend=velocity[0])
+        
+        raw_scg = acceleration
         
         # 2. 小波分解 (Wavelet Decomposition)
         # fs = 200Hz. Nyquist = 100Hz.
         # Level 8 decomposition using 'sym8'
-        # Approx: 0-0.39 Hz (Respiration)
         
         w_family = 'sym8'
         try:
@@ -290,34 +304,39 @@ class SCGGradeProcess(multiprocessing.Process):
             level = min(8, max_level)
             
             if level < 4:
-                return raw_scg # Not enough data points
+                return raw_scg
                 
             coeffs = pywt.wavedec(raw_scg, w_family, level=level)
             
-            # Reset coefficients (reconstruct only desired bands)
+            # 频段重构 (Reconstruction) - 针对加速度信号优化
+            # 目标频段: 1Hz - 40Hz
             
-            # Zero out Approximation (Low freq / Respiration)
-            # 这实际上利用了已知的呼吸频段信息进行去除
-            coeffs[0] = np.zeros_like(coeffs[0]) 
+            # Level 8 (fs=200):
+            # A8: 0 - 0.39 Hz (Respiration Baseline) -> Remove
+            coeffs[0] = np.zeros_like(coeffs[0])
             
-            # Zero out very low freq details if level is high enough
+            # D8: 0.39 - 0.78 Hz (Low Freq Noise) -> Remove
             if level >= 8:
-                 coeffs[1] = np.zeros_like(coeffs[1]) # D8 (0.39-0.78Hz)
+                 coeffs[1] = np.zeros_like(coeffs[1])
             
-            # Zero out high freq details (Muscle Noise)
-            if len(coeffs) >= 3:
-                coeffs[-1] = np.zeros_like(coeffs[-1]) # D1
-                coeffs[-2] = np.zeros_like(coeffs[-2]) # D2
+            # D7: 0.78 - 1.56 Hz -> Keep (Heart Rate Fundamental)
+            # D6: 1.56 - 3.12 Hz -> Keep
+            # D5: 3.12 - 6.25 Hz -> Keep
+            # D4: 6.25 - 12.5 Hz -> Keep (AC Fundamental)
+            # D3: 12.5 - 25.0 Hz -> Keep (AO Fundamental)
+            # D2: 25.0 - 50.0 Hz -> Keep (AO Harmonics / Sharp peaks)
+            # D1: 50.0 - 100 Hz -> Remove (High Freq Muscle Noise)
+            
+            if len(coeffs) >= 1:
+                coeffs[-1] = np.zeros_like(coeffs[-1]) # D1 (50-100Hz)
             
             # Reconstruct
             clean_scg = pywt.waverec(coeffs, w_family)
             
-            # Trim to original length
             if len(clean_scg) > len(raw_scg):
                 clean_scg = clean_scg[:len(raw_scg)]
             
             # 3. 匹配滤波 (Matched Filter)
-            # 使用预定义的 SCG 模板增强信号
             matched_scg = self._apply_matched_filter(clean_scg)
                 
             return matched_scg
