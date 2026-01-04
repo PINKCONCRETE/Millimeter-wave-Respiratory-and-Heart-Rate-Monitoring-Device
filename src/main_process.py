@@ -17,6 +17,7 @@ if str(project_root) not in sys.path:
 
 from src.mmw_rader import MMWRadarProcess
 from src.mmw_scg_grade import SCGGradeProcess
+from src.mmw_realtime_analysis import MMWRealtimeAnalysisProcess
 from src.mmw_breath import MMWBreathProcess
 from src.mmw_heart_rate import MMWHeartRateProcess
 from src.mmw_human_check import MMWHumanCheckProcess
@@ -60,6 +61,7 @@ class RadarBroadcaster(multiprocessing.Process):
                 now = time.time()
                 if now - last_fps_time >= 1.0:
                     fps = frame_count / (now - last_fps_time)
+                    fps = fps / 8.0 # 修正FPS，除以8
                     print(f"[Broadcaster] FPS: {fps:.1f}")
                     if self._fps_queue:
                         try:
@@ -111,6 +113,7 @@ class MMWProcessPipeline:
         # 注意：multiprocessing.Queue 是进程安全的
         self.radar_queue = multiprocessing.Queue(maxsize=2000)
         self.radar_queue_scg = multiprocessing.Queue(maxsize=1000)
+        self.radar_queue_realtime = multiprocessing.Queue(maxsize=1000)
         self.radar_queue_breath = multiprocessing.Queue(maxsize=1000)
         self.radar_queue_heart = multiprocessing.Queue(maxsize=1000)
         self.radar_queue_human = multiprocessing.Queue(maxsize=1000)
@@ -123,6 +126,7 @@ class MMWProcessPipeline:
         
         # 结果队列 - IPC用
         self.scg_queue_ipc = multiprocessing.Queue(maxsize=500)
+        self.realtime_analysis_queue_ipc = multiprocessing.Queue(maxsize=100)
         self.breath_queue_ipc = multiprocessing.Queue(maxsize=500)
         self.heart_rate_queue_ipc = multiprocessing.Queue(maxsize=500)
         self.human_check_queue_ipc = multiprocessing.Queue(maxsize=500)
@@ -132,6 +136,7 @@ class MMWProcessPipeline:
         self.radar_process = None
         self.broadcaster = None
         self.scg_process = None
+        self.realtime_analysis_process = None
         self.breath_process = None
         self.heart_rate_process = None
         self.human_check_process = None
@@ -174,12 +179,13 @@ class MMWProcessPipeline:
             self.radar_queue, 
             [
                 self.radar_queue_scg,
+                self.radar_queue_realtime,
                 self.radar_queue_breath,
                 self.radar_queue_heart,
                 self.radar_queue_human
             ],
             fps_queue=self.fps_queue_ipc,
-            downsample_ratios=[1, 1, 1, 1] # 人体检测可适当降采样，这里保持1
+            downsample_ratios=[1, 1, 1, 1, 1] 
         )
         self.broadcaster.start()
         
@@ -189,6 +195,12 @@ class MMWProcessPipeline:
             BroadcastingQueue([self.scg_queue_db, self.scg_queue_ipc])
         )
         self.scg_process.start()
+        
+        self.realtime_analysis_process = MMWRealtimeAnalysisProcess(
+            self.radar_queue_realtime,
+            self.realtime_analysis_queue_ipc
+        )
+        self.realtime_analysis_process.start()
         
         self.breath_process = MMWBreathProcess(
             self.radar_queue_breath, 
@@ -214,7 +226,8 @@ class MMWProcessPipeline:
             'breath_data': self.breath_queue_ipc,
             'heart_rate_data': self.heart_rate_queue_ipc,
             'human_check_data': self.human_check_queue_ipc,
-            'fps_stats': self.fps_queue_ipc
+            'fps_stats': self.fps_queue_ipc,
+            'realtime_analysis': self.realtime_analysis_queue_ipc
         }
         self.ipc_process = IPCWorkerProcess(ipc_queues)
         self.ipc_process.start()
@@ -271,6 +284,7 @@ class MMWProcessPipeline:
             ('雷达', self.radar_process),
             ('广播器', self.broadcaster),
             ('SCG', self.scg_process),
+            ('实时分析', self.realtime_analysis_process),
             ('呼吸', self.breath_process),
             ('心率', self.heart_rate_process),
             ('人体检测', self.human_check_process),

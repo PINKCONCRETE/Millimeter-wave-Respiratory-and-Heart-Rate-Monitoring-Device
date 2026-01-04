@@ -10,7 +10,108 @@ from queue import Empty
 from typing import Any
 
 import numpy as np
-from scipy.signal import butter, filtfilt
+from scipy.signal import butter, filtfilt, find_peaks
+
+# Parameters adapted for 200Hz sampling rate
+PARAMS_OPTIMIZED = {
+    'lowcut': 0.5,
+    'highcut': 20.0,
+    'height': 0.27,
+    'order': 5,
+    'distance_sec': 0.39,  # 最小峰间距（秒）
+    'prominence': 0.56,
+    'h': 0.005,  # 适配200Hz: 1/200 = 0.005
+    'rr_threshold': 0.93,  # RR间期阈值
+    'width': 3,  # 最小峰宽度
+}
+
+
+def differentiator_filter_double(data, h=0.005):
+    """
+    双微分滤波器，用于提取心跳信号
+    h参数根据采样率调整：h = 1/fs
+    """
+    length = data.shape[0] - 6
+    res_data = np.zeros_like(data)
+    
+    if length > 0:
+        res_data[3:length+3] = data[0+3:length+3] * 4.0 + \
+                               (data[1+3:length+1+3] + data[-1+3:length-1+3]) - \
+                               2.0 * (data[2+3:length+2+3] + data[-2+3:length-2+3]) - \
+                               (data[3+3:length+3+3] + data[-3+3:length-3+3])
+        res_data = res_data / 16.0 / h / h
+    
+    return res_data
+
+
+def process_radar_realtime(radar_raw):
+    """
+    实时处理雷达信号
+    输入: radar_raw - 复数雷达数据 (time_samples,)
+    输出: 归一化的处理后信号
+    """
+    # 1. 提取相位并展开
+    phase = np.unwrap(np.angle(radar_raw))
+    
+    # 2. 应用双微分滤波器
+    diff_sig = differentiator_filter_double(phase, h=PARAMS_OPTIMIZED['h'])
+    
+    # 3. 归一化
+    max_val = np.max(np.abs(diff_sig))
+    if max_val == 0:
+        max_val = 1
+    norm_sig = diff_sig / max_val
+    
+    return norm_sig
+
+
+def detect_peaks_realtime(sig, fs=200):
+    """
+    实时峰值检测
+    """
+    distance = int(PARAMS_OPTIMIZED['distance_sec'] * fs)
+    height_threshold = PARAMS_OPTIMIZED['height'] * np.max(np.abs(sig))
+    
+    peaks, properties = find_peaks(
+        sig, 
+        height=height_threshold, 
+        distance=distance,
+        prominence=PARAMS_OPTIMIZED['prominence'],
+        width=PARAMS_OPTIMIZED['width']
+    )
+    
+    return peaks, properties
+
+
+def analyze_heart_rhythm(peaks, fs=200):
+    """
+    分析心律，检测心率和早搏
+    """
+    result = {
+        'hr': np.nan,
+        'premature': False,
+        'rr_intervals': [],
+        'peaks_count': len(peaks)
+    }
+    
+    if len(peaks) < 2:
+        return result
+    
+    # 计算RR间期（秒）
+    rr_intervals = np.diff(peaks) / fs
+    result['rr_intervals'] = rr_intervals.tolist()
+    
+    # 计算心率
+    mean_rr = np.mean(rr_intervals)
+    result['hr'] = 60.0 / mean_rr
+    
+    # 检测早搏（RR间期显著缩短）
+    premature_count = np.sum(rr_intervals < PARAMS_OPTIMIZED['rr_threshold'] * mean_rr)
+    if premature_count > 0:
+        result['premature'] = True
+        result['premature_count'] = int(premature_count)
+    
+    return result
 
 
 class SCGGradeProcess(multiprocessing.Process):
@@ -24,7 +125,7 @@ class SCGGradeProcess(multiprocessing.Process):
     
     # 缓冲区参数
     MIN_BUFFER_SIZE = 200 # 至少需要1秒数据
-    MAX_BUFFER_SIZE = 1000
+    MAX_BUFFER_SIZE = 1000 # 5秒窗口
     OUTLIER_THRESHOLD = 1500
     TIME_STEP = 0.005
 
@@ -65,7 +166,7 @@ class SCGGradeProcess(multiprocessing.Process):
                     now = time.time()
                     if now - last_fps_time >= 1.0:
                         fps = (self._completed_frames - last_fps_frame_count) / (now - last_fps_time)
-                        print(f"[SCG] FPS: {fps:.1f}")
+                        # print(f"[SCG] FPS: {fps:.1f}")
                         last_fps_frame_count = self._completed_frames
                         last_fps_time = now
                         
@@ -123,6 +224,7 @@ class SCGGradeProcess(multiprocessing.Process):
         return np.diff(unwrapped_phase, prepend=unwrapped_phase[0])
 
     def _compute_score_and_fft(self, signal: np.ndarray) -> tuple[float, np.ndarray, int]:
+        """计算信号评分与FFT."""
         fft_signal = signal - np.mean(signal)
         window = np.hanning(len(fft_signal))
         n_fft = 4096
@@ -131,7 +233,7 @@ class SCGGradeProcess(multiprocessing.Process):
         if len(fft_signal) > 0:
             fft_magnitude = fft_magnitude / len(fft_signal) * 2
             
-        idx_20hz = int(20 * n_fft / 200)
+        idx_20hz = int(20 * n_fft / self.SAMPLING_RATE)
         energy_spectrum = fft_magnitude ** 2
         total_energy = np.sum(energy_spectrum)
         
@@ -141,6 +243,28 @@ class SCGGradeProcess(multiprocessing.Process):
             score = (low_freq_energy / total_energy) * 100.0
             
         return score, fft_magnitude, n_fft
+    
+    def _run_realtime_analysis(self, radar_data: np.ndarray) -> dict:
+        """
+        运行 realtime.py 中的核心分析逻辑
+        """
+        # radar_data shape: (N, channel_num, bins_per_channel)
+        # 我们需要选择一个最佳通道和bin，或者直接对求和后的信号进行处理
+        # 这里为了简单和一致性，我们选择当前选定的最大能量bin，并对所有通道求和
+        
+        final_bin_idx = self._current_max_bin
+        complex_sum = np.sum(radar_data[:, :, final_bin_idx], axis=1) # (N,) 复数数据
+        
+        # 信号处理
+        processed_sig = process_radar_realtime(complex_sum)
+        
+        # 峰值检测
+        peaks, _ = detect_peaks_realtime(processed_sig, self.SAMPLING_RATE)
+        
+        # 心律分析
+        rhythm_result = analyze_heart_rhythm(peaks, self.SAMPLING_RATE)
+        
+        return rhythm_result
 
     def _generate_new_scg_point(self) -> None:
         fft_data = np.array(self._frame_buffer)
@@ -190,10 +314,6 @@ class SCGGradeProcess(multiprocessing.Process):
         scg_waveform[outlier_idx] = 0.0
         
         latest_value = scg_waveform[-1] # Use last value
-        
-        # Autocorrelation (Optional: Compute less frequently?)
-        # Let's keep it for now as it might be needed for HR calculation if we move it here
-        # But currently we don't send it.
             
         result = {
             "type": "scg_data",

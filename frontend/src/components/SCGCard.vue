@@ -5,19 +5,21 @@
     :initial-window-seconds="20"
     :show-window-control="true"
     :show-y-axis-control="true"
+    :default-y-min="-1.0"
+    :default-y-max="1.0"
     @init="onChartInit"
     @window-change="onWindowChange"
     @y-axis-change="onYAxisChange"
   >
-    <template #stats-extra>
+    <!-- <template #stats-extra>
         <el-tag size="small" type="primary">Bin: {{ currentBin }}</el-tag>
         <el-tag size="small" type="primary" style="margin-left: 8px">Score: {{ currentScore.toFixed(1) }}</el-tag>
-    </template>
+    </template> -->
   </BaseChartCard>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onUnmounted } from 'vue';
+import { ref, computed, onUnmounted, watch } from 'vue';
 import * as echarts from 'echarts';
 import BaseChartCard from './BaseChartCard.vue';
 import { setupIPCListeners, type SCGData, type FPSData } from '../utils/ipc';
@@ -32,12 +34,14 @@ const bufferSize = ref(0);
 const status = ref('Waiting...');
 const currentBin = ref(0);
 const currentScore = ref(0.0);
+const realtimeHR = ref(0);
+const isPremature = ref(false);
 
 const statsList = computed(() => [
-    { label: 'Buffer', value: bufferSize.value, type: 'info' as const },
-    { label: 'Backend', value: fps.value, type: 'success' as const },
-    { label: 'UI', value: uiFps.value, type: 'warning' as const },
-    { label: 'Status', value: status.value, type: status.value === 'Active' ? 'success' as const : 'warning' as const }
+    { label: 'RT HR', value: `${Math.round(realtimeHR.value)} bpm`, type: isPremature.value ? 'warning' as const : 'success' as const },
+    { label: 'Premature', value: isPremature.value ? 'Yes' : 'No', type: isPremature.value ? 'danger' as const : 'info' as const },
+    { label: 'Human', value: props.isInBed ? 'Yes' : 'No', type: props.isInBed ? 'success' as const : 'info' as const },
+    { label: 'FPS', value: fps.value, type: 'success' as const }
 ]);
 
 // Chart state
@@ -58,6 +62,11 @@ let animationFrameId: number | null = null;
 let lastUiFpsTime = Date.now();
 let uiFrameCount = 0;
 let hasNewData = false;
+let lastIsInBed = true;
+
+watch(() => props.isInBed, (newVal) => {
+    hasNewData = true; // Force update on state change
+});
 
 const onChartInit = (instance: echarts.ECharts) => {
     chartInstance = instance;
@@ -160,8 +169,13 @@ const renderLoop = () => {
             yAxis: yAxisOption,
             series: [{ data: displayData }]
         });
-        hasNewData = false;
+    } else {
+        // Clear chart when not in bed
+        chartInstance.setOption({
+            series: [{ data: [] }]
+        });
     }
+    hasNewData = false;
   }
 
   animationFrameId = requestAnimationFrame(renderLoop);
@@ -176,18 +190,20 @@ const startRenderLoop = () => {
 // IPC Listeners
 setupIPCListeners({
     onSCG: (data: SCGData) => {
-        if (typeof data.scg_value === 'number') {
+        // Handle new data point
+        if (data.scg_value !== undefined) {
             pendingData.push(data.scg_value);
-            status.value = 'Active';
-            if (data.max_bin !== undefined) currentBin.value = data.max_bin;
-            if (data.score !== undefined) currentScore.value = data.score;
         } else if (data.scg_waveform && data.scg_waveform.length > 0) {
-            // Fallback for full waveform: take last point
-             pendingData.push(data.scg_waveform[data.scg_waveform.length - 1]);
-             status.value = 'Active';
-             if (data.max_bin !== undefined) currentBin.value = data.max_bin;
-             if (data.score !== undefined) currentScore.value = data.score;
+            // Fallback for full waveform if sent
+             pendingData.push(...data.scg_waveform);
         }
+
+        if (data.max_bin !== undefined) currentBin.value = data.max_bin;
+        if (data.score !== undefined) currentScore.value = data.score;
+    },
+    onRealtimeAnalysis: (data: RealtimeAnalysisData) => {
+        if (data.realtime_hr !== undefined && !isNaN(data.realtime_hr)) realtimeHR.value = data.realtime_hr;
+        if (data.realtime_premature !== undefined) isPremature.value = data.realtime_premature;
     },
     onFPS: (data: FPSData) => {
         fps.value = data.fps;

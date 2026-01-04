@@ -718,18 +718,3 @@ def calculate_heart_rate(fftData):
     except Exception as e:
         print('hr报错：')
         print(e)
-
-# data = np.load('../tmp.npy')
-# print(calculate_heart_rate(data))
-
-# def calculate_heart_rate(fftData):
-#         results = {
-#             "status": 'succeeded',
-#             "heart_rate": 60,
-#             "num_RR_interval": 5,
-#             "mean_RR_interval": 0.8,
-#             "sum_square_RR": 1.2,
-#             "ibi_data": [800, 750, 600, 780]
-#         }
-#         # print(time.time() - a)
-#         return results

@@ -2,9 +2,10 @@
 export interface BreathData {
   type: 'breath_data';
   frame_idx: number;
-  rr_wave: number[];
-  displacement: number[];
-  flow_rate: number[];
+  rr_wave?: number[];
+  displacement?: number[];
+  flow_rate?: number[] | number;
+  breath_value?: number;
   respiratory_rate: number;
   warning_id: number;
   is_in_bed?: boolean; // May be added by processing
@@ -18,6 +19,13 @@ export interface SCGData {
   isArrhythmia: number;
   max_bin?: number;
   score?: number;
+}
+
+export interface RealtimeAnalysisData {
+  type: 'realtime_analysis';
+  realtime_hr: number;
+  realtime_premature: boolean;
+  timestamp: number;
 }
 
 export interface HeartRateData {
@@ -39,7 +47,7 @@ export interface FPSData {
   timestamp: number;
 }
 
-export type IPCMessage = BreathData | SCGData | HeartRateData | HumanCheckData | FPSData;
+export type IPCMessage = BreathData | SCGData | HeartRateData | HumanCheckData | FPSData | RealtimeAnalysisData;
 
 // Define window.electronAPI type
 declare global {
@@ -56,6 +64,7 @@ export const setupIPCListeners = (handlers: {
   onHeartRate?: (data: HeartRateData) => void;
   onHumanCheck?: (data: HumanCheckData) => void;
   onFPS?: (data: FPSData) => void;
+  onRealtimeAnalysis?: (data: RealtimeAnalysisData) => void;
 }) => {
   if (window.electronAPI) {
     window.electronAPI.onData((data: IPCMessage) => {
@@ -74,7 +83,7 @@ export const setupIPCListeners = (handlers: {
       if ('scg_waveform' in logData && Array.isArray(logData.scg_waveform) && logData.scg_waveform.length > 20) {
           (logData as any).scg_waveform = `Array(${logData.scg_waveform.length})`;
       }
-      console.log(`[IPC] ${data.type}:`, logData);
+      // console.log(`[IPC] ${data.type}:`, logData);
 
       switch (data.type) {
         case 'breath_data':
@@ -91,6 +100,9 @@ export const setupIPCListeners = (handlers: {
           break;
         case 'fps_stats':
           handlers.onFPS?.(data);
+          break;
+        case 'realtime_analysis':
+          handlers.onRealtimeAnalysis?.(data);
           break;
       }
     });

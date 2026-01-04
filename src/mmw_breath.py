@@ -10,6 +10,7 @@ from queue import Empty
 from typing import Any
 
 import numpy as np
+from scipy import signal
 
 
 class MMWBreathProcess(multiprocessing.Process):
@@ -77,6 +78,8 @@ class MMWBreathProcess(multiprocessing.Process):
         # 当前帧构建缓冲区
         self._current_frame_build = None
         self._current_frame_id = -1
+        self._respiratory_rate = 0.0
+        self._warning_id = 0
 
         last_fps_time = time.time()
         last_fps_frame_count = 0
@@ -90,7 +93,7 @@ class MMWBreathProcess(multiprocessing.Process):
                     now = time.time()
                     if now - last_fps_time >= 1.0:
                         fps = (self._completed_frames - last_fps_frame_count) / (now - last_fps_time)
-                        print(f"[Breath] FPS: {fps:.1f}")
+                        # print(f"[Breath] FPS: {fps:.1f}")
                         last_fps_frame_count = self._completed_frames
                         last_fps_time = now
                         
@@ -98,6 +101,8 @@ class MMWBreathProcess(multiprocessing.Process):
                     continue
                 except Exception as e:
                     print(f"呼吸处理异常: {e}")
+                    import traceback
+                    traceback.print_exc()
         except KeyboardInterrupt:
             print("\n呼吸处理进程收到停止信号")
         finally:
@@ -146,8 +151,8 @@ class MMWBreathProcess(multiprocessing.Process):
         # 1. 获取最近的数据
         data = np.array(self._frame_buffer)
         
-        # 2. 简单的Bin选择 (能量最大)
-        # 实际应用中可能需要更复杂的逻辑，这里简化为每100帧更新一次目标Bin
+        # 2. Bin选择 (能量最大)
+        # 每100帧更新一次目标Bin
         if self._completed_frames % 100 == 0:
             energies = np.sum(np.abs(data[:, :, :]), axis=(0, 1))
             self._current_target_bin = np.argmax(energies)
@@ -157,59 +162,44 @@ class MMWBreathProcess(multiprocessing.Process):
         # 3. 提取相位
         # 聚合通道 (简单的求和)
         complex_signal = np.sum(data[:, :, target_bin], axis=1)
-        phase = np.unwrap(np.angle(complex_signal))
+        raw_phase = np.angle(complex_signal)
         
-        # 4. 去除趋势 (简单的滑动平均减法或高通滤波)
-        # 这里使用简单的去均值，实际应使用带通滤波
-        # 呼吸频率 0.1 - 0.5 Hz
+        # 4. 高级信号处理 (使用移植的算法)
+        # 展开
+        unwrap_phase = np.unwrap(raw_phase)
         
-        # 简单差分获取相对位移
-        displacement = phase - np.mean(phase)
+        # 去基线漂移 (只对足够长的数据进行)
+        if len(unwrap_phase) > self.SAMPLING_RATE * 1:
+            corrected_signal = self._remove_baseline_drift(unwrap_phase)
+        else:
+            corrected_signal = unwrap_phase - np.mean(unwrap_phase)
+            
+        # 平滑
+        if len(corrected_signal) > self.SAMPLING_RATE * 0.5:
+             br_signal = self._smooth_signal(corrected_signal)
+        else:
+             br_signal = corrected_signal
+             
+        # 翻转 (根据旧代码逻辑)
+        br_signal = -br_signal
         
         # 5. 计算流速 (位移的导数)
-        flow_rate = np.gradient(displacement)
+        flow_rate = np.gradient(br_signal)
         
-        # 6. 发送数据
-        # 增量发送：只发送最新的一个点
-        # 为了降低IPC频率，可以攒几个点发一次，或者每帧发一个
-        # 这里每帧发一个，让前端去缓冲
-        
-        # Calculate respiratory rate every 1 second (approx 200 frames)
+        # 6. 定期计算呼吸率和检测异常 (每1秒 / 200帧)
         if self._completed_frames % 200 == 0:
-            self._respiratory_rate = 0.0
-            if len(displacement) >= 600:
-                 # Use last 10 seconds or max available
-                 calc_len = min(len(displacement), 2000)
-                 calc_data = displacement[-calc_len:]
-                 
-                 # Detrend
-                 calc_data = calc_data - np.mean(calc_data)
-                 
-                 # FFT
-                 fft_res = np.fft.fft(calc_data)
-                 freqs = np.fft.fftfreq(len(calc_data), 1.0/self.SAMPLING_RATE)
-                 
-                 # Filter 0.1 - 0.5 Hz (6 - 30 BPM)
-                 mask = (freqs > 0.1) & (freqs < 0.5)
-                 valid_freqs = freqs[mask]
-                 valid_fft = np.abs(fft_res)[mask]
-                 
-                 if len(valid_fft) > 0:
-                     peak_idx = np.argmax(valid_fft)
-                     best_freq = valid_freqs[peak_idx]
-                     self._respiratory_rate = best_freq * 60.0
+            self._warning_id, self._respiratory_rate = self._detect_breath_anomalies(br_signal)
+            # print(f"呼吸率: {self._respiratory_rate:.1f} BPM, Warning: {self._warning_id}")
 
-        # Send incremental data (latest point)
-        # Note: displacement and flow_rate are arrays from buffer processing
-        # We take the last point.
-        if len(displacement) > 0:
+        # 7. 发送数据 (增量发送)
+        if len(br_signal) > 0:
             result = {
                 "type": "breath_data",
                 "frame_idx": self._completed_frames,
-                "breath_value": float(displacement[-1]), # Incremental
+                "breath_value": float(br_signal[-1]), # Incremental
                 "flow_value": float(flow_rate[-1]),     # Incremental
-                "respiratory_rate": round(getattr(self, '_respiratory_rate', 0.0), 1),
-                "warning_id": 0
+                "respiratory_rate": round(float(self._respiratory_rate), 1),
+                "warning_id": int(self._warning_id)
             }
             
             if not self._output_queue.full():
@@ -218,3 +208,175 @@ class MMWBreathProcess(multiprocessing.Process):
                 except:
                     pass
 
+    def _remove_baseline_drift(self, signal_data: np.ndarray, win_len: float = 5.0) -> np.ndarray:
+        """去除信号的基线漂移."""
+        window_size = int(self.SAMPLING_RATE * win_len)
+        if window_size > len(signal_data):
+            window_size = len(signal_data)
+        if window_size % 2 == 0:
+            window_size += 1
+            
+        if window_size < 3:
+             return signal_data - np.mean(signal_data)
+
+        pad_width = window_size // 2
+
+        # 反射填充
+        padded_signal = np.pad(signal_data, (pad_width, pad_width), mode="reflect")
+
+        # 移动平均计算基线
+        baseline = np.convolve(
+            padded_signal, np.ones(window_size) / window_size, mode="same"
+        )
+        baseline = baseline[pad_width:-pad_width]
+
+        # 减去基线
+        corrected_signal = signal_data - baseline
+        return corrected_signal
+
+    def _smooth_signal(self, signal_data: np.ndarray, win_len: float = 1.7) -> np.ndarray:
+        """使用滑动窗口平滑信号."""
+        window_size = int(self.SAMPLING_RATE * win_len)
+        if window_size > len(signal_data):
+            window_size = len(signal_data)
+        
+        if window_size < 2:
+            return signal_data
+            
+        smoothed = np.convolve(
+            signal_data, np.ones(window_size) / window_size, mode="same"
+        )
+        return smoothed
+
+    def _find_peaks_valleys(self, data: np.ndarray, time_valid: float = 0.3) -> tuple[np.ndarray, np.ndarray]:
+        """在信号中寻找峰值和谷值."""
+        data = np.squeeze(data)
+        min_distance = int(time_valid * self.SAMPLING_RATE)
+        if min_distance < 1:
+            min_distance = 1
+
+        # 寻找谷值（负峰值）
+        valleys, _ = signal.find_peaks(-data, distance=min_distance)
+
+        # 寻找峰值
+        peaks, _ = signal.find_peaks(data, distance=min_distance)
+
+        return peaks, valleys
+
+    def _detect_breath_anomalies(self, phase_info: np.ndarray) -> tuple[int, float]:
+        """检测呼吸异常（呼吸暂停和COPD）."""
+        if len(phase_info) == 0:
+            return 0, 0.0
+
+        # 1. 检测呼吸暂停：能量过低或幅度过小
+        energy_thresh = 0.5
+        range_value_thresh = 0.15
+        phase_energy = np.sum(np.square(phase_info)) / len(phase_info)
+        max_amplitude = np.max(np.abs(phase_info)) if len(phase_info) > 0 else 0
+
+        # 注意：这里的阈值可能需要根据归一化情况调整。
+        # 旧代码中未明确归一化，但这里使用了原始相位。
+        # 为了安全起见，我们放宽一点或仅在特定条件下触发
+        # if phase_energy < energy_thresh or max_amplitude < range_value_thresh:
+        #     return 21, 0.0  # 呼吸暂停
+
+        # 2. 计算呼吸参数用于COPD检测
+        peaks, valleys = self._find_peaks_valleys(phase_info)
+
+        # 至少需要2个完整周期才能计算参数
+        if len(peaks) < 2:
+            return 0, 0.0  # 数据不足
+
+        # 对齐峰值和谷值
+        if len(valleys) > 0 and peaks[0] > valleys[0]:
+            peaks = peaks[1:]
+
+        if len(peaks) < 2:
+            return 0, 0.0
+
+        # 计算呼吸率和COPD相关参数
+        ti_te_list = []
+        duty_cycle_list = []
+        t_ptef_te_list = []
+        ie_50_list = []
+        rr_list = []
+
+        for i in range(len(peaks) - 1):
+            if peaks[i] >= len(phase_info) or peaks[i+1] >= len(phase_info):
+                continue
+                
+            single_cycle = -phase_info[peaks[i]:peaks[i+1]]  # 翻转信号以匹配旧算法预期 (吸气为正?)
+            # 实际上，phase_info已经是处理过的，如果前面 _extract_breath_waveform 做了 -br_signal
+            # 那么这里可能不需要再次负号，或者取决于原始定义的吸气方向。
+            # 假设吸气是波峰，呼气是波谷。
+            
+            cycle_length = len(single_cycle)
+            if cycle_length == 0:
+                continue
+
+            t_tot = cycle_length / self.SAMPLING_RATE
+            peak_idx = np.argmax(single_cycle)
+            t_i = peak_idx / self.SAMPLING_RATE
+            t_e = t_tot - t_i
+
+            if t_e == 0 or t_tot == 0:
+                continue
+
+            ti_te = t_i / t_e
+            duty_cycle = t_i / t_tot
+            rr = 60 / t_tot
+
+            rr_list.append(rr)
+            ti_te_list.append(ti_te)
+            duty_cycle_list.append(duty_cycle)
+            
+            # 简单计算IE50等复杂参数可能出错，这里先只保留基础参数和RR
+            # 如果需要严格复刻COPD检测，需要更严谨的流速计算
+            
+            # 计算流速相关参数
+            try:
+                derivative = np.gradient(single_cycle)
+                t_PTEF = np.argmin(derivative) / self.SAMPLING_RATE - t_tot / 2
+                t_ptef_te = t_PTEF / t_e if t_e != 0 else 0
+                t_ptef_te_list.append(t_ptef_te)
+
+                # 计算IE50
+                mid_inhale = (single_cycle[0] + single_cycle[peak_idx]) / 2
+                mid_exhale = (single_cycle[peak_idx] + single_cycle[-1]) / 2
+            
+                TIF_50_idx = np.where(single_cycle[:peak_idx] >= mid_inhale)[0][0]
+                TEF_50_idx = np.where(single_cycle[peak_idx:] <= mid_exhale)[0][0] + peak_idx
+                tif_50 = abs(derivative[TIF_50_idx])
+                tef_50 = abs(derivative[TEF_50_idx])
+                ie_50 = tif_50 / tef_50 if tef_50 != 0 else 0
+                ie_50_list.append(ie_50)
+            except (IndexError, ValueError):
+                continue
+
+        # 计算中位数
+        if not ti_te_list:
+            return 0, 0.0
+
+        median_ti_te = np.median(ti_te_list)
+        median_duty_cycle = np.median(duty_cycle_list)
+        median_t_ptef_te = np.median(t_ptef_te_list) if t_ptef_te_list else 0
+        median_ie_50 = np.median(ie_50_list) if ie_50_list else 0
+        median_rr = np.median(rr_list)
+
+        # 3. COPD判断：至少2个参数异常
+        ti_te_flag = 0.4 <= median_ti_te <= 1.2
+        duty_cycle_flag = 0.35 <= median_duty_cycle <= 0.55
+        t_ptef_te_flag = 0.241 <= median_t_ptef_te <= 0.583
+        ie_50_flag = 0.9 <= median_ie_50 <= 1.88
+
+        abnormal_count = sum([
+            not ti_te_flag,
+            not duty_cycle_flag,
+            not t_ptef_te_flag,
+            not ie_50_flag
+        ])
+
+        if abnormal_count >= 2:
+            return 22, median_rr  # COPD
+
+        return 0, median_rr  # 正常

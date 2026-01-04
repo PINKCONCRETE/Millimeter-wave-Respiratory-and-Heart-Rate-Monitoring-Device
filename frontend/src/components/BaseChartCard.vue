@@ -5,32 +5,37 @@
         <div class="header-left">
             <span class="title">{{ title }}</span>
         </div>
-        <div class="controls" style="display: flex; align-items: center; gap: 10px; margin-left: 20px;">
+        <div class="controls" style="display: flex; align-items: center; gap: 8px; margin-left: 20px;">
             <div class="control-group" v-if="showWindowControl">
-                <span style="font-size: 12px; margin-right: 5px;">Window(s):</span>
-                <el-input-number 
-                    v-model="internalWindowSize" 
-                    size="small" 
-                    :min="1" 
-                    :step="1" 
-                    controls-position="right" 
-                    style="width: 80px" 
-                    @change="handleWindowChange"
-                />
+                <el-tooltip content="Display Window Size (seconds)" placement="top">
+                    <el-input-number 
+                        v-model="internalWindowSize" 
+                        size="small" 
+                        :min="1" 
+                        :step="1" 
+                        controls-position="right" 
+                        style="width: 70px" 
+                        @change="handleWindowChange"
+                    />
+                </el-tooltip>
             </div>
             <div class="control-group" style="display: flex; align-items: center;" v-if="showYAxisControl">
-                <span style="font-size: 12px; margin-right: 5px;">Y:</span>
-                <el-switch 
-                    v-model="autoScaleY" 
-                    size="small"
-                    active-text="Auto" 
-                    inactive-text="Man" 
-                    @change="handleYAxisChange"
-                />
-                <div v-if="!autoScaleY" style="display: flex; align-items: center; margin-left: 5px;">
-                    <el-input-number v-model="manualYMin" size="small" :step="0.1" controls-position="right" style="width: 70px" @change="handleYAxisChange" />
-                    <span style="margin: 0 5px">-</span>
-                    <el-input-number v-model="manualYMax" size="small" :step="0.1" controls-position="right" style="width: 70px" @change="handleYAxisChange" />
+                <el-tooltip content="Auto Scale Y-Axis" placement="top">
+                    <el-switch 
+                        v-model="autoScaleY" 
+                        size="small"
+                        active-text="Auto" 
+                        inactive-text="Man" 
+                        inline-prompt
+                        style="--el-switch-on-color: #13ce66; margin-right: 5px;"
+                        @change="handleYAxisChange"
+                    />
+                </el-tooltip>
+                <div v-if="!autoScaleY" style="display: flex; align-items: center; gap: 4px;">
+                    <el-input-number v-model="manualYMin" size="small" :step="0.1" controls-position="right" style="width: 60px" @change="handleYAxisChange" placeholder="Min"/>
+                    <span style="color: #909399;">-</span>
+                    <el-input-number v-model="manualYMax" size="small" :step="0.1" controls-position="right" style="width: 60px" @change="handleYAxisChange" placeholder="Max"/>
+                    <el-button size="small" circle icon="Refresh" @click="resetYAxis" title="Reset Default" style="margin-left: 2px;" />
                 </div>
             </div>
         </div>
@@ -64,12 +69,15 @@ const props = defineProps<{
     initialWindowSeconds?: number;
     showWindowControl?: boolean;
     showYAxisControl?: boolean;
+    defaultYMin?: number;
+    defaultYMax?: number;
 }>();
 
 const emit = defineEmits<{
     (e: 'init', instance: echarts.ECharts): void;
     (e: 'window-change', seconds: number): void;
     (e: 'y-axis-change', auto: boolean, min: number, max: number): void;
+    (e: 'reset-y-axis'): void;
 }>();
 
 const chartRef = ref<HTMLElement | null>(null);
@@ -77,8 +85,8 @@ let chartInstance: echarts.ECharts | null = null;
 
 const internalWindowSize = ref(props.initialWindowSeconds || 10);
 const autoScaleY = ref(true);
-const manualYMin = ref(-1.0);
-const manualYMax = ref(1.0);
+const manualYMin = ref(props.defaultYMin ?? -1.0);
+const manualYMax = ref(props.defaultYMax ?? 1.0);
 
 const initChart = () => {
     if (chartRef.value) {
@@ -99,6 +107,20 @@ const handleWindowChange = () => {
 
 const handleYAxisChange = () => {
     emit('y-axis-change', autoScaleY.value, manualYMin.value, manualYMax.value);
+};
+
+const resetYAxis = () => {
+    autoScaleY.value = true;
+    manualYMin.value = props.defaultYMin ?? -1.0;
+    manualYMax.value = props.defaultYMax ?? 1.0;
+    
+    // Reset Zoom if possible
+    chartInstance?.dispatchAction({
+        type: 'restore'
+    });
+    
+    handleYAxisChange();
+    emit('reset-y-axis');
 };
 
 onMounted(() => {

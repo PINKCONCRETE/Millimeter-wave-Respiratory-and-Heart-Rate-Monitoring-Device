@@ -4,29 +4,33 @@
     :stats="statsList"
     :show-window-control="false"
     :show-y-axis-control="true"
+    :default-y-min="0"
+    :default-y-max="100"
     @init="onChartInit"
     @y-axis-change="onYAxisChange"
   />
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onUnmounted } from 'vue';
+import { ref, computed, onUnmounted, watch } from 'vue';
 import * as echarts from 'echarts';
 import BaseChartCard from './BaseChartCard.vue';
-import { setupIPCListeners, type HeartRateData, type HumanCheckData } from '../utils/ipc';
+import { setupIPCListeners, type HeartRateData, type HumanCheckData, type FPSData } from '../utils/ipc';
 
 const props = defineProps<{
   isInBed: boolean
 }>();
 
 const currentHRV = ref(0);
+const lastValidHRV = ref(0);
 const stressIndex = ref(0);
 const hasHuman = ref(false);
+const fps = ref(0);
 
 const statsList = computed(() => [
-    { label: 'HRV', value: `${currentHRV.value} ms`, type: 'success' as const },
-    { label: 'Stress Index', value: stressIndex.value, type: 'warning' as const },
-    { label: 'Human', value: hasHuman.value ? 'Yes' : 'No', type: hasHuman.value ? 'success' as const : 'info' as const }
+    { label: 'Latest HRV', value: `${Math.round(lastValidHRV.value)} ms`, type: 'success' as const },
+    { label: 'Human', value: hasHuman.value ? 'Yes' : 'No', type: hasHuman.value ? 'success' as const : 'info' as const },
+    { label: 'FPS', value: fps.value, type: 'success' as const }
 ]);
 
 // Chart state
@@ -37,6 +41,10 @@ let dataBuffer: DataPoint[] = [];
 let isAutoScaleY = true;
 let manualYMin = 0;
 let manualYMax = 100;
+
+watch(() => props.isInBed, () => {
+    updateChart();
+});
 
 const onChartInit = (instance: echarts.ECharts) => {
     chartInstance = instance;
@@ -89,6 +97,13 @@ const onYAxisChange = (auto: boolean, min: number, max: number) => {
 const updateChart = () => {
     if (!chartInstance) return;
 
+    if (!props.isInBed) {
+        chartInstance.setOption({
+            series: [{ data: [] }]
+        });
+        return;
+    }
+
     const yAxisOption = isAutoScaleY ? {
         scale: true,
         min: null,
@@ -109,6 +124,9 @@ const updateChart = () => {
 setupIPCListeners({
     onHeartRate: (data: HeartRateData) => {
         currentHRV.value = data.hrv;
+        if (data.hrv > 0) {
+            lastValidHRV.value = data.hrv;
+        }
         stressIndex.value = data.stress_index;
         
         const now = new Date();
@@ -129,6 +147,9 @@ setupIPCListeners({
     },
     onHumanCheck: (data: HumanCheckData) => {
         hasHuman.value = data.has_human;
+    },
+    onFPS: (data: FPSData) => {
+        fps.value = data.fps;
     }
 });
 </script>
