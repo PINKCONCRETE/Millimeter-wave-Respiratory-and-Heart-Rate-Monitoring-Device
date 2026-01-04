@@ -58,7 +58,7 @@ graph TD
         D --> F[SQLite 数据库]
         E --> F
     end
-    B -->|IPC/WebSocket| G(Electron 前端)
+    B -->|IPC (Named Pipes)| G(Electron 前端)
     subgraph Frontend [可视化界面]
         G --> H[Vue 3 组件库]
         H --> I[ECharts 实时渲染]
@@ -108,6 +108,8 @@ python src/main_process.py
 
 ### 2. 启动前端应用
 前端提供实时数据可视化界面。
+*   确保后端服务已启动并正确连接到雷达设备。
+*   前端默认连接本地后端服务。
 ```bash
 cd frontend
 # 开发模式运行 (浏览器访问)
@@ -128,16 +130,27 @@ npm run electron:dev
 .
 ├── firmware/           # 雷达固件镜像 (AWR1843)
 ├── frontend/           # Vue 3 + Electron 前端应用
-│   ├── src/components/ # 可视化组件 (SCGCard, BreathCard 等)
-│   ├── src/utils/      # IPC 通信逻辑
-│   └── electron/       # Electron 主进程代码
+│   ├── electron/       # Electron 主进程与预加载脚本
+│   │   ├── main.js     # Electron 入口
+│   │   └── preload.js  # 预加载脚本 (IPC 安全桥接)
+│   └── src/
+│       ├── components/ # 可视化组件 (SCGCard, BreathCard 等)
+│       ├── utils/      # 前端工具库 (IPC 通信封装)
+│       ├── App.vue     # 应用根组件
+│       └── main.ts     # Vue 入口文件
 ├── hardware/           # 外壳 3D 打印模型与 CAD 文件
 ├── src/                # Python 后端源代码
-│   ├── main_process.py # 程序入口
+│   ├── main_process.py # 程序入口 (多进程管理)
+│   ├── config.py       # 系统配置文件
 │   ├── mmw_radar.py    # 雷达串口通信接口
 │   ├── mmw_breath.py   # 呼吸信号处理算法
+│   ├── mmw_heart_rate.py # 心率与 HRV 计算
+│   ├── mmw_human_check.py # 人体存在与体动检测
 │   ├── mmw_scg_grade.py# SCG 信号评分与分析
-│   └── models.py       # 数据库模型 (SQLite)
+│   ├── mmw_database.py # 数据库读写操作封装
+│   ├── models.py       # SQLite 数据库模型定义
+│   ├── ipc_worker.py   # 进程间通信 (IPC) 核心逻辑
+│   └── utils.py        # 通用工具函数
 └── requirements.txt    # Python 依赖列表
 ```
 
