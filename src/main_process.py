@@ -32,13 +32,14 @@ from src.utils import BroadcastingQueue
 
 
 class RadarBroadcaster(multiprocessing.Process):
-    """雷达数据广播进程 - 将数据复制到多个队列(带降采样)."""
+    """雷达数据广播进程 - 将数据复制到多个队列(带降采样)并统计帧率."""
     
-    def __init__(self, input_queue: multiprocessing.Queue, output_queues: list[multiprocessing.Queue], downsample_ratios: list = None):
+    def __init__(self, input_queue: multiprocessing.Queue, output_queues: list[multiprocessing.Queue], fps_queue: multiprocessing.Queue = None, downsample_ratios: list = None):
         super().__init__()
         self.daemon = True
         self._input = input_queue
         self._outputs = output_queues
+        self._fps_queue = fps_queue
         self._downsample_ratios = downsample_ratios or [1] * len(output_queues)
         self._stop_event = multiprocessing.Event()
         self._counters = [0] * len(output_queues)
@@ -46,10 +47,31 @@ class RadarBroadcaster(multiprocessing.Process):
     def run(self):
         """主循环 - 广播数据."""
         print("雷达广播进程已启动...")
+        last_fps_time = time.time()
+        frame_count = 0
+        
         while not self._stop_event.is_set():
             try:
                 # 设置超时以便响应停止事件
                 data = self._input.get(timeout=1.0)
+                
+                # 统计帧率
+                frame_count += 1
+                now = time.time()
+                if now - last_fps_time >= 1.0:
+                    fps = frame_count / (now - last_fps_time)
+                    print(f"[Broadcaster] FPS: {fps:.1f}")
+                    if self._fps_queue:
+                        try:
+                            self._fps_queue.put_nowait({
+                                "type": "fps_stats", 
+                                "fps": round(fps, 1), 
+                                "timestamp": now
+                            })
+                        except Full:
+                            pass
+                    frame_count = 0
+                    last_fps_time = now
                 
                 # 根据降采样比例发送到各个队列
                 for i, (q, ratio) in enumerate(zip(self._outputs, self._downsample_ratios)):
@@ -104,6 +126,7 @@ class MMWProcessPipeline:
         self.breath_queue_ipc = multiprocessing.Queue(maxsize=500)
         self.heart_rate_queue_ipc = multiprocessing.Queue(maxsize=500)
         self.human_check_queue_ipc = multiprocessing.Queue(maxsize=500)
+        self.fps_queue_ipc = multiprocessing.Queue(maxsize=10)
         
         # 进程实例
         self.radar_process = None
@@ -155,6 +178,7 @@ class MMWProcessPipeline:
                 self.radar_queue_heart,
                 self.radar_queue_human
             ],
+            fps_queue=self.fps_queue_ipc,
             downsample_ratios=[1, 1, 1, 1] # 人体检测可适当降采样，这里保持1
         )
         self.broadcaster.start()
@@ -189,7 +213,8 @@ class MMWProcessPipeline:
             'scg_data': self.scg_queue_ipc,
             'breath_data': self.breath_queue_ipc,
             'heart_rate_data': self.heart_rate_queue_ipc,
-            'human_check_data': self.human_check_queue_ipc
+            'human_check_data': self.human_check_queue_ipc,
+            'fps_stats': self.fps_queue_ipc
         }
         self.ipc_process = IPCWorkerProcess(ipc_queues)
         self.ipc_process.start()

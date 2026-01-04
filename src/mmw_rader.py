@@ -61,6 +61,16 @@ class MMWRadarProcess(multiprocessing.Process):
         self._temp_imag = 0
         self._complex_count = 0
         self._temp_complexes: list[complex] = []
+        
+        # 统计信息
+        self._received_frames = 0
+        self._last_received_frames = 0
+        self._received_channels = 0
+        self._last_received_channels = 0
+        self._received_bytes = 0
+        self._last_received_bytes = 0
+        self._start_time = 0.0
+        self._last_fps_time = 0.0
 
     def _init_serial(self) -> Any:
         """初始化串口连接"""
@@ -91,6 +101,7 @@ class MMWRadarProcess(multiprocessing.Process):
         self._received_bytes = 0
         self._last_received_bytes = 0
         self._start_time = time.time()
+        self._last_fps_time = time.time()
 
         try:
             while self._running:
@@ -206,15 +217,13 @@ class MMWRadarProcess(multiprocessing.Process):
 
         if self._temp_channel_id == self._channel_num - 1:
             self._received_frames += 1
-            if self._received_frames % 500 == 0:
-                current_time = time.time()
-                elapsed = current_time - self._start_time
-                frame_rate = (self._received_frames - self._last_received_frames) / elapsed if elapsed > 0 else 0
-                # print(f"[雷达] 已接收 {self._received_frames} 帧 | FPS: {frame_rate:.1f}")
+            
+            now = time.time()
+            if now - self._last_fps_time >= 1.0:
+                fps = (self._received_frames - self._last_received_frames) / (now - self._last_fps_time)
+                print(f"[Radar] FPS: {fps:.1f}")
                 
                 self._last_received_frames = self._received_frames
-                self._last_received_channels = self._received_channels
-                self._last_received_bytes = self._received_bytes
-                self._start_time = current_time
+                self._last_fps_time = now
 
         self.decode_status = self.STATE_WAITING_DLC_LOW

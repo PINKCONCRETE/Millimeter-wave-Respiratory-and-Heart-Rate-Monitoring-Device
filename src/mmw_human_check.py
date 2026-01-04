@@ -245,11 +245,20 @@ class MMWHumanCheckProcess(multiprocessing.Process):
         self._current_offset = 0
         self._detection_history = deque(maxlen=100)
 
+        last_fps_time = time.time()
+        last_fps_frame_count = 0
         try:
             while not self._stop_event.is_set():
                 try:
                     frame_data = self._input_queue.get(timeout=1.0)
                     self._process_single_frame(frame_data)
+                    
+                    now = time.time()
+                    if now - last_fps_time >= 1.0:
+                        fps = (self._completed_frames - last_fps_frame_count) / (now - last_fps_time)
+                        print(f"[HumanCheck] FPS: {fps:.1f}")
+                        last_fps_frame_count = self._completed_frames
+                        last_fps_time = now
                 except Empty:
                     continue
                 except Exception as e:

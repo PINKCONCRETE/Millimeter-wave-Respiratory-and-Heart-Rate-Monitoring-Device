@@ -61,9 +61,10 @@ class MMWHeartRateProcess(multiprocessing.Process):
         
         self._stop_event = multiprocessing.Event()
 
-    def _calculate_stress_metrics(self, ibi_list: list[float]) -> tuple[float, float, str]:
+    def _calculate_stress_metrics(self, ibi_list: list[float] | np.ndarray) -> tuple[float, float, str]:
         """计算HRV(SDNN)和压力指数."""
-        if not ibi_list or len(ibi_list) < 2:
+        # Fix: handle numpy array truth value ambiguity by checking len directly
+        if len(ibi_list) < 2:
             return 0.0, 0.0, "低"
             
         # HRV (SDNN)
@@ -136,11 +137,22 @@ class MMWHeartRateProcess(multiprocessing.Process):
         
         self._current_frame_build = None
 
+        last_fps_time = time.time()
+        last_fps_frame_count = 0
+
         try:
             while not self._stop_event.is_set():
                 try:
                     frame_data = self._input_queue.get(timeout=1.0)
                     self._process_single_frame(frame_data)
+                    
+                    now = time.time()
+                    if now - last_fps_time >= 1.0:
+                        fps = (self._completed_frames - last_fps_frame_count) / (now - last_fps_time)
+                        print(f"[HeartRate] FPS: {fps:.1f}")
+                        last_fps_frame_count = self._completed_frames
+                        last_fps_time = now
+                        
                 except Empty:
                     continue
                 except Exception as e:

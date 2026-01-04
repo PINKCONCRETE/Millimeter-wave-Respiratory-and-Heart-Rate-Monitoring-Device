@@ -50,12 +50,25 @@ class SCGGradeProcess(multiprocessing.Process):
         self._completed_frames = 0
         self._generated_scg_points = 0
         self._current_max_bin = 0
+        self._current_score = 0.0
+        self._current_offset = 0
+        
+        last_fps_time = time.time()
+        last_fps_frame_count = 0
         
         try:
             while not self._stop_event.is_set():
                 try:
                     frame_data = self._input_queue.get(timeout=1.0)
                     self._process_single_frame(frame_data)
+                    
+                    now = time.time()
+                    if now - last_fps_time >= 1.0:
+                        fps = (self._completed_frames - last_fps_frame_count) / (now - last_fps_time)
+                        print(f"[SCG] FPS: {fps:.1f}")
+                        last_fps_frame_count = self._completed_frames
+                        last_fps_time = now
+                        
                 except Empty:
                     continue
                 except Exception as e:
@@ -125,70 +138,76 @@ class SCGGradeProcess(multiprocessing.Process):
         score = 0.0
         if total_energy > 0:
             low_freq_energy = np.sum(energy_spectrum[:idx_20hz])
-            score = low_freq_energy / total_energy
+            score = (low_freq_energy / total_energy) * 100.0
             
         return score, fft_magnitude, n_fft
 
     def _generate_new_scg_point(self) -> None:
         fft_data = np.array(self._frame_buffer)
         
-        current_selected_bin = self._current_max_bin if 0 <= self._current_max_bin < self._bins_per_channel else 0
-        best_bin_idx = 0
-        max_score = -1.0
-        bin_results = {}
-        
-        for bin_idx in range(self._bins_per_channel):
-             phase_data = self._extract_phase(fft_data, bin_idx)
-             scg_waveform = self._compute_derivative_waveform(phase_data)
-             
-             outlier_idx = np.abs(scg_waveform) > self.OUTLIER_THRESHOLD
-             scg_waveform[outlier_idx] = 0.0
-             
-             score, fft_mag, n_fft = self._compute_score_and_fft(scg_waveform)
-             bin_results[bin_idx] = (score, scg_waveform, fft_mag, n_fft)
-             
-             if score > max_score:
-                 max_score = score
-                 best_bin_idx = bin_idx
-        
-        current_bin_score = bin_results[current_selected_bin][0]
-        HYSTERESIS_THRESHOLD = 0.05
-        
-        if max_score > current_bin_score + HYSTERESIS_THRESHOLD:
-            final_bin_idx = best_bin_idx
-        else:
-            final_bin_idx = current_selected_bin
+        # Optimization: Only select best bin every 100 frames (0.5s)
+        # Otherwise use current max bin
+        if self._completed_frames % 100 == 0:
+            current_selected_bin = self._current_max_bin if 0 <= self._current_max_bin < self._bins_per_channel else 0
+            best_bin_idx = 0
+            max_score = -1.0
+            bin_results = {}
             
-        score, scg_waveform, fft_magnitude, n_fft = bin_results[final_bin_idx]
-        self._current_max_bin = final_bin_idx
+            for bin_idx in range(self._bins_per_channel):
+                 phase_data = self._extract_phase(fft_data, bin_idx)
+                 scg_waveform = self._compute_derivative_waveform(phase_data)
+                 
+                 outlier_idx = np.abs(scg_waveform) > self.OUTLIER_THRESHOLD
+                 scg_waveform[outlier_idx] = 0.0
+                 
+                 score, fft_mag, n_fft = self._compute_score_and_fft(scg_waveform)
+                 bin_results[bin_idx] = (score, scg_waveform, fft_mag, n_fft)
+                 
+                 if score > max_score:
+                     max_score = score
+                     best_bin_idx = bin_idx
+            
+            # Hysteresis logic
+            current_bin_score = bin_results[current_selected_bin][0]
+            HYSTERESIS_THRESHOLD = 5.0 # Score is now 0-100
+            
+            if max_score > current_bin_score + HYSTERESIS_THRESHOLD:
+                final_bin_idx = best_bin_idx
+                self._current_score = max_score
+            else:
+                final_bin_idx = current_selected_bin
+                self._current_score = current_bin_score
+                
+            self._current_max_bin = final_bin_idx
+        
+        # Always compute waveform for the current selected bin (to get the latest point)
+        # Note: We still compute the full waveform for the selected bin to ensure continuity/filtering
+        # But we save computing 9 other bins 99% of the time.
+        final_bin_idx = self._current_max_bin
+        phase_data = self._extract_phase(fft_data, final_bin_idx)
+        scg_waveform = self._compute_derivative_waveform(phase_data)
+        outlier_idx = np.abs(scg_waveform) > self.OUTLIER_THRESHOLD
+        scg_waveform[outlier_idx] = 0.0
         
         latest_value = scg_waveform[-1] # Use last value
         
-        # Autocorrelation
-        signal = scg_waveform
-        if np.std(signal) > 1e-6:
-            signal_norm = (signal - np.mean(signal)) / np.std(signal)
-        else:
-            signal_norm = signal - np.mean(signal)
-            
-        corr = np.correlate(signal_norm, signal_norm, mode='full')
-        corr = corr[len(corr)//2:]
-        if len(signal_norm) > 0:
-            corr = corr / len(signal_norm)
+        # Autocorrelation (Optional: Compute less frequently?)
+        # Let's keep it for now as it might be needed for HR calculation if we move it here
+        # But currently we don't send it.
             
         result = {
             "type": "scg_data",
             "frame_idx": self._generated_scg_points,
-            "scg_waveform": scg_waveform.tolist(), # Send the waveform buffer
-            "isArrhythmia": 0, # Placeholder, logic to be implemented or retrieved
+            #"scg_waveform": scg_waveform.tolist(), # Optimization: Don't send full waveform
+            "isArrhythmia": 0,
             "scg_value": float(latest_value),
-            "autocorrelation": corr.tolist(),
-            "fft_magnitude": fft_magnitude.tolist(),
+            #"autocorrelation": corr.tolist(), # Optimization: Don't send heavy data
+            #"fft_magnitude": fft_magnitude.tolist(), # Optimization: Don't send heavy data
             "timestamp": self._generated_scg_points * self.TIME_STEP,
             "max_bin": final_bin_idx,
             "offset": self._current_offset,
-            "n_fft": n_fft,
-            "score": score,
+            #"n_fft": n_fft,
+            "score": self._current_score,
         }
         
         if not self._output_queue.full():
