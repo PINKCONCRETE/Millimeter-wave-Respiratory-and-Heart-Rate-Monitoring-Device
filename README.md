@@ -47,7 +47,7 @@
 
 ```mermaid
 graph TD
-    A[TI AWR1843 雷达] -->|UART 串口| B[Python 后端]
+    A[毫米波雷达] -->|UART 串口| B[Python 后端]
     subgraph Backend [后端服务]
         B --> C{数据处理管线}
         C -->|FFT/峰值检测| D[呼吸 & 心率算法]
@@ -125,7 +125,7 @@ npm run electron:dev
 
 ```text
 .
-├── firmware/           # 雷达固件镜像 (AWR1843)
+├── firmware/           # 雷达固件镜像 
 ├── frontend/           # Vue 3 + Electron 前端应用
 │   ├── electron/       # Electron 主进程与预加载脚本
 │   │   ├── main.js     # Electron 入口
