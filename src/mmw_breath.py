@@ -74,7 +74,8 @@ class MMWBreathProcess(multiprocessing.Process):
         self._generated_breath_cycles = 0
         self._current_target_bin = 0
         self._start_time = time.time()
-        
+        self.last_point = 0.0
+
         # 当前帧构建缓冲区
         self._current_frame_build = None
         self._current_frame_id = -1
@@ -166,7 +167,11 @@ class MMWBreathProcess(multiprocessing.Process):
         
         # 4. 高级信号处理 (使用移植的算法)
         # 展开
+        # raw_phase = np.array([self.last_point].extend(raw_phase.tolist()))
+        
         unwrap_phase = np.unwrap(raw_phase)
+        unwrap_phase += np.unwrap([self.last_point, raw_phase[0]])[1] - raw_phase[0]
+        self.last_point = unwrap_phase[0]
         
         # 去基线漂移 (只对足够长的数据进行)
         if len(unwrap_phase) > self.SAMPLING_RATE * 1:
@@ -231,7 +236,8 @@ class MMWBreathProcess(multiprocessing.Process):
         baseline = baseline[pad_width:-pad_width]
 
         # 减去基线
-        corrected_signal = signal_data - baseline
+        # corrected_signal = signal_data - baseline
+        corrected_signal = signal_data
         return corrected_signal
 
     def _smooth_signal(self, signal_data: np.ndarray, win_len: float = 1.7) -> np.ndarray:

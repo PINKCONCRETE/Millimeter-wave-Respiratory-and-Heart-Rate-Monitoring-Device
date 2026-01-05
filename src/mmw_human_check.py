@@ -311,7 +311,7 @@ class MMWHumanCheckProcess(multiprocessing.Process):
             
             result = {
                 "type": "human_check_data",
-                "has_human": has_human,
+                "has_human": True,
                 "frame_count": self._completed_frames,
                 "offset": self._current_offset,
                 "detection_rate": sum(self._detection_history) / len(self._detection_history)
