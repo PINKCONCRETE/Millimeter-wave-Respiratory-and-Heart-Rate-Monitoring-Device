@@ -296,7 +296,7 @@ class SCGGradeProcess(multiprocessing.Process):
 
         # 1. 提取呼吸参考信号 (Reference)
         # 使用强低通滤波 (< 0.8Hz)
-        sos = butter(4, 0.8, 'low', fs=self.SAMPLING_RATE, output='sos')
+        sos = butter(4, 1.5, 'low', fs=self.SAMPLING_RATE, output='sos')
         resp_ref = sosfiltfilt(sos, phase_data)
         
         # 去除直流
