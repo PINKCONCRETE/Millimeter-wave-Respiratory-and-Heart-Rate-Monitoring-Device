@@ -16,7 +16,6 @@
     <img src="https://img.shields.io/badge/vue-3.x-4FC08D.svg?style=flat-square&logo=vue.js&logoColor=white" alt="Vue" />
     <img src="https://img.shields.io/badge/electron-28.x-47848F.svg?style=flat-square&logo=electron&logoColor=white" alt="Electron" />
     <img src="https://img.shields.io/badge/license-MIT-green.svg?style=flat-square" alt="License" />
-    <img src="https://img.shields.io/badge/platform-win-lightgrey.svg?style=flat-square" alt="Platform" />
   </p>
 </div>
 
