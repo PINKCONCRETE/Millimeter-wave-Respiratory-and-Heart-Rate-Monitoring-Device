@@ -90,12 +90,6 @@ onMounted(() => {
   <el-container class="layout-container">
     <el-header class="app-header">
       <div class="header-content">
-        <div class="heart-rate-display">
-          <div class="heart-rate-label">心率</div>
-          <div class="heart-rate-value" v-if="isInBed">{{ Math.round(currentHeartRate) }}</div>
-          <div class="heart-rate-status" v-else>已离开</div>
-          <div class="heart-rate-unit" v-if="isInBed">bpm</div>
-        </div>
         <h2>毫米波生命体征监测系统</h2>
         <div class="spacer"></div>
         <div class="layout-controls">
@@ -103,6 +97,12 @@ onMounted(() => {
             <el-radio-button label="grid">2x2 Grid</el-radio-button>
             <el-radio-button label="focus">1+3 Focus</el-radio-button>
           </el-radio-group>
+        </div>
+        <div class="heart-rate-display">
+          <div class="heart-rate-label">心率</div>
+          <div class="heart-rate-value" v-if="isInBed">{{ Math.round(currentHeartRate) }}</div>
+          <div class="heart-rate-status" v-else>已离开</div>
+          <div class="heart-rate-unit" v-if="isInBed">bpm</div>
         </div>
       </div>
     </el-header>
@@ -165,7 +165,7 @@ body {
   background: #fff;
   border-radius: 8px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-  margin-right: 30px;
+  margin-left: 50px;
 }
 
 .heart-rate-label {
