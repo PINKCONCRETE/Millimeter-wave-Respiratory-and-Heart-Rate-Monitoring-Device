@@ -60,6 +60,9 @@ class MMWHeartRateProcess(multiprocessing.Process):
         self._buffer_size = buffer_size
         
         self._stop_event = multiprocessing.Event()
+        
+        # Add smoothing buffer for RR interval
+        self._rr_interval_buffer = deque(maxlen=5)  # Keep last 5 RR intervals for smoothing
 
     def _calculate_stress_metrics(self, ibi_list: Union[List[float], np.ndarray]) -> tuple[float, float, float, float, float, float, int, float, str]:
         """计算HRV(SDNN, RMSSD, pNN50)和压力指数.
@@ -136,6 +139,25 @@ class MMWHeartRateProcess(multiprocessing.Process):
             level = "高"
             
         return sdnn, rmssd, pnn50, mean_rr, sum_square_rr, si, num_rr, sdnn, level
+
+    def _smooth_rr_interval(self, rr_interval: float) -> float:
+        """Apply simple moving average smoothing to RR interval.
+        
+        Args:
+            rr_interval: Current RR interval in ms
+            
+        Returns:
+            Smoothed RR interval in ms
+        """
+        if rr_interval <= 0:
+            return 0.0
+            
+        self._rr_interval_buffer.append(rr_interval)
+        
+        # Calculate average of buffer
+        if len(self._rr_interval_buffer) > 0:
+            return float(np.mean(self._rr_interval_buffer))
+        return rr_interval
 
     def run(self) -> None:
         """主循环：从队列消费数据并处理."""
@@ -249,6 +271,10 @@ class MMWHeartRateProcess(multiprocessing.Process):
             # Calculate HRV and Stress
             sdnn, rmssd, pnn50, mean_rr, sum_square_rr, stress_index, num_rr, hrv_sdnn, stress_level = self._calculate_stress_metrics(result.get("ibi_list", []))
 
+            # Calculate RR interval from heart rate and apply smoothing
+            rr_interval_raw = 60000.0 / self.final_heart_rate if self.final_heart_rate > 0 else 0.0
+            rr_interval_smoothed = self._smooth_rr_interval(rr_interval_raw)
+
             # 构造输出结果
             hr_dict = {
                 "type": "heart_rate_data",
@@ -258,6 +284,7 @@ class MMWHeartRateProcess(multiprocessing.Process):
                 "hrv_rmssd": rmssd,
                 "hrv_pnn50": pnn50,
                 "mean_rr_interval": mean_rr,
+                "rr_interval_smoothed": rr_interval_smoothed,
                 "sum_square_rr": sum_square_rr,
                 "num_rr_intervals": num_rr,
                 "stress_index": stress_index,

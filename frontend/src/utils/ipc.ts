@@ -35,6 +35,7 @@ export interface HeartRateData {
   hrv_rmssd: number;
   hrv_pnn50: number;
   mean_rr_interval: number;
+  rr_interval_smoothed?: number;  // Smoothed RR interval in ms
   stress_index: number;
   stress_level: string;
 }

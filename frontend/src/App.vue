@@ -4,7 +4,7 @@ import SCGCard from './components/SCGCard.vue';
 import BreathCard from './components/BreathCard.vue';
 import HeartRateCard from './components/HeartRateCard.vue';
 import HRVCard from './components/HRVCard.vue';
-import { setupIPCListeners, type HumanCheckData } from './utils/ipc';
+import { setupIPCListeners, type HumanCheckData, type HeartRateData } from './utils/ipc';
 
 const componentMap = {
   scg: SCGCard,
@@ -21,6 +21,7 @@ const isInBed = ref(true);
 const layoutMode = ref('grid');
 const focusedId = ref('scg');
 const cardOrder = ref(['scg', 'breath', 'hr', 'hrv']);
+const currentHeartRate = ref(0);
 
 const layoutClass = computed(() => {
   return {
@@ -77,6 +78,9 @@ onMounted(() => {
     setupIPCListeners({
         onHumanCheck: (data: HumanCheckData) => {
             if (data.has_human !== undefined) isInBed.value = data.has_human;
+        },
+        onHeartRate: (data: HeartRateData) => {
+            currentHeartRate.value = data.heart_rate;
         }
     });
 });
@@ -86,6 +90,12 @@ onMounted(() => {
   <el-container class="layout-container">
     <el-header class="app-header">
       <div class="header-content">
+        <div class="heart-rate-display">
+          <div class="heart-rate-label">心率</div>
+          <div class="heart-rate-value" v-if="isInBed">{{ Math.round(currentHeartRate) }}</div>
+          <div class="heart-rate-status" v-else>已离开</div>
+          <div class="heart-rate-unit" v-if="isInBed">bpm</div>
+        </div>
         <h2>毫米波生命体征监测系统</h2>
         <div class="spacer"></div>
         <div class="layout-controls">
@@ -147,8 +157,46 @@ body {
     flex: 1;
 }
 
+.heart-rate-display {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 10px 20px;
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  margin-right: 30px;
+}
+
+.heart-rate-label {
+  font-size: 14px;
+  color: #606266;
+  font-weight: 500;
+}
+
+.heart-rate-value {
+  font-size: 42px;
+  font-weight: 700;
+  color: #F56C6C;
+  line-height: 1;
+  font-family: 'Arial', sans-serif;
+  letter-spacing: -1px;
+}
+
+.heart-rate-unit {
+  font-size: 16px;
+  color: #909399;
+  font-weight: 500;
+}
+heart-rate-status {
+  font-size: 18px;
+  color: #909399;
+  font-weight: 500;
+}
+
+.
 .layout-controls {
-  margin-right: 20px;
+  margin-right: 30px;
 }
 
 .app-main {

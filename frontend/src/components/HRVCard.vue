@@ -8,14 +8,14 @@ const props = defineProps<{
   isInBed: boolean
 }>();
 
-const currentHRV = ref(0);
-const lastValidHRV = ref(0);
+const currentRRInterval = ref(0);
+const lastValidRRInterval = ref(0);
 const stressIndex = ref(0);
 const hasHuman = ref(false);
 const fps = ref(0);
 
 const statsList = computed(() => [
-    { label: 'HRV', value: `${Math.round(lastValidHRV.value)} ms`, type: 'success' as const },
+    { label: 'RR间期', value: `${Math.round(lastValidRRInterval.value)} ms`, type: 'success' as const },
     { label: '状态', value: props.isInBed ? '正常' : '离开', type: props.isInBed ? 'success' as const : 'info' as const },
     { label: 'FPS', value: fps.value, type: 'success' as const }
 ]);
@@ -42,7 +42,7 @@ const onChartInit = (instance: echarts.ECharts) => {
           trigger: 'axis',
           formatter: (params: any) => {
               const date = new Date(params[0].value[0]);
-              return `${date.toLocaleTimeString()} : ${params[0].value[1]} ms`;
+              return `${date.toLocaleTimeString()} : ${Math.round(params[0].value[1])} ms`;
           }
       },
       xAxis: { 
@@ -55,11 +55,12 @@ const onChartInit = (instance: echarts.ECharts) => {
         splitLine: { show: true, lineStyle: { type: 'dashed', color: '#eee' } }
       },
       series: [{
-        name: 'HRV',
+        name: 'RR间期',
         type: 'line',
         showSymbol: true,
         symbolSize: 4,
         connectNulls: false, 
+        smooth: true,  // Enable built-in smoothing
         lineStyle: { color: '#67C23A', width: 2 },
         itemStyle: { color: '#67C23A' },
         areaStyle: {
@@ -120,18 +121,19 @@ const formatTimestamp = (date: Date): string => {
 // IPC Listeners
 setupIPCListeners({
     onHeartRate: (data: HeartRateData) => {
-        // Use SDNN as the primary HRV metric for the chart
-        const hrvValue = data.hrv_sdnn;
-        currentHRV.value = hrvValue;
-        if (hrvValue > 0) {
-            lastValidHRV.value = hrvValue;
+        // 直接使用后端计算和平滑后的RR间期数据
+        const rrInterval = data.rr_interval_smoothed || 0;
+        
+        currentRRInterval.value = rrInterval;
+        if (rrInterval > 0) {
+            lastValidRRInterval.value = rrInterval;
         }
         stressIndex.value = data.stress_index;
         
         const now = new Date();
         const timestamp = formatTimestamp(now); 
         
-        const value = hasHuman.value ? hrvValue : null;
+        const value = hasHuman.value ? rrInterval : null;
         
         dataBuffer.push({
             name: timestamp,
@@ -155,12 +157,12 @@ setupIPCListeners({
 
 <template>
   <BaseChartCard
-    title="HRV"
+    title="RR间期"
     :stats="statsList"
     :show-window-control="false"
     :show-y-axis-control="true"
-    :default-y-min="0"
-    :default-y-max="100"
+    :default-y-min="600"
+    :default-y-max="1200"
     @init="onChartInit"
     @y-axis-change="onYAxisChange"
   />
