@@ -42,8 +42,8 @@ let manualYMax = 1.0;
 
 // Limit control
 const isLimitEnabled = ref(false);
-const limitMin = ref(-0.5);
-const limitMax = ref(0.5);
+const limitMin = ref(-500.0);
+const limitMax = ref(500.0);
 
 // Render loop
 let animationFrameId: number | null = null;
@@ -252,7 +252,7 @@ onUnmounted(() => {
   <BaseChartCard
     title="SCG"
     :stats="statsList"
-    :initial-window-seconds="20"
+    :initial-window-seconds="5"
     :show-window-control="true"
     :show-y-axis-control="true"
     :default-y-min="-1.0"
