@@ -7,7 +7,7 @@ import platform
 # Serial Port Configuration
 if platform.system() == 'Windows':
     # Default serial port for the millimeter wave radar
-    SERIAL_PORT = os.getenv('MMW_SERIAL_PORT', 'COM7')
+    SERIAL_PORT = os.getenv('MMW_SERIAL_PORT', 'COM3')
     # IPC Configuration (Named Pipe for Electron)
     PIPE_NAME = os.getenv('MMW_PIPE_NAME', r'\\.\pipe\mmw_monitor_pipe')
 else:

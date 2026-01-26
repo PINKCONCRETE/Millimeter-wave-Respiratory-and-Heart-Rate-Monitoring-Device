@@ -15,7 +15,7 @@ project_root = Path(__file__).parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
-from src.mmw_radar import MMWRadarProcess
+from src.mmw_radar_24G import MMWRadar24GProcess
 from src.mmw_scg_grade import SCGGradeProcess
 from src.mmw_realtime_analysis import MMWRealtimeAnalysisProcess
 from src.mmw_breath import MMWBreathProcess
@@ -167,7 +167,7 @@ class MMWProcessPipeline:
         print("="*50)
         
         # 1. 启动雷达采集进程
-        self.radar_process = MMWRadarProcess(
+        self.radar_process = MMWRadar24GProcess(
             self.radar_queue, self.serial_port, self.serial_baudrate
         )
         self.radar_process.start()
