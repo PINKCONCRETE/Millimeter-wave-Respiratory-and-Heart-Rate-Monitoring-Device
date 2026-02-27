@@ -178,8 +178,8 @@ class MMWHeartRateProcess(multiprocessing.Process):
         self._generated_hr_results = 0
         self._current_max_bin = 0
         self._start_time = time.time()
-        self.last_heart_rate = 0
-        self.final_heart_rate = 0
+        self.last_heart_rate = 60
+        self.final_heart_rate = 60
         
         self._current_frame_build = None
 
@@ -266,7 +266,12 @@ class MMWHeartRateProcess(multiprocessing.Process):
                 self.final_heart_rate = self.last_heart_rate
             else: 
                 self.last_heart_rate = self.final_heart_rate
-                self.final_heart_rate = result["heart_rate"]
+                if result["heart_rate"] - self.final_heart_rate > 5:
+                    self.final_heart_rate += 5
+                elif result["heart_rate"] - self.final_heart_rate < -5: 
+                    self.final_heart_rate -=5
+                else:
+                    self.final_heart_rate = result["heart_rate"]
             
             # Calculate HRV and Stress
             sdnn, rmssd, pnn50, mean_rr, sum_square_rr, stress_index, num_rr, hrv_sdnn, stress_level = self._calculate_stress_metrics(result.get("ibi_list", []))
