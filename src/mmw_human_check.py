@@ -3,6 +3,7 @@
 基于FFT能量幅度和峰值强度进行人体存在判断。
 改编自 human_check_old.py，集成到流水线架构中。
 """
+
 import copy
 import multiprocessing
 import time
@@ -47,7 +48,7 @@ class HumanCheckByWave(HumanCheckBase):
         tollerence: float = 0.05,
     ) -> None:
         super().__init__()
-        self._base_energies = [3001.] * self.BINS_PER_CHANNEL
+        self._base_energies = [3001.0] * self.BINS_PER_CHANNEL
         self._accumulated_count = 0
         self._exception_count = 0
 
@@ -56,7 +57,7 @@ class HumanCheckByWave(HumanCheckBase):
         self.tollerence = tollerence
 
     def reset(self) -> None:
-        self._base_energies = [3001.] * self.BINS_PER_CHANNEL
+        self._base_energies = [3001.0] * self.BINS_PER_CHANNEL
         self._accumulated_count = 0
         self._exception_count = 0
 
@@ -64,29 +65,29 @@ class HumanCheckByWave(HumanCheckBase):
         super().do_human_check(energies, offset)
         need_reset_base = False
         is_exception = False
-        
+
         if offset < self.NEAR_PEAK_RANGE:
             for bin in range(offset, self.NEAR_PEAK_RANGE):
                 base = self._base_energies[bin - offset]
                 energy = energies[bin - offset]
                 diff = energy - base
-                if base > 3000. and abs(diff / base) > self.tollerence:
+                if base > 3000.0 and abs(diff / base) > self.tollerence:
                     is_exception = True
                     break
-        
+
         start_bin = self.NEAR_PEAK_RANGE if offset < self.NEAR_PEAK_RANGE else offset
-        peak = max(energies[start_bin - offset:])
+        peak = max(energies[start_bin - offset :])
         for bin in range(start_bin, offset + self.BINS_PER_CHANNEL):
             energy = energies[bin - offset]
             if energy > peak * 0.5:
                 base = self._base_energies[bin - offset]
                 diff = energy - base
-                if base > 3000. and abs(diff / base) > self.tollerence:
+                if base > 3000.0 and abs(diff / base) > self.tollerence:
                     is_exception = True
                     break
 
         if is_exception:
-            self._exception_count += 1 
+            self._exception_count += 1
 
         self._accumulated_count += 1
 
@@ -113,15 +114,51 @@ class HumanCheckByPeak(HumanCheckBase):
 
     BINS_PER_CHANNEL = 10
     PEAK_THRESHOLD = [
-        79350.0, 109245.0, 120000.0, 117750.0, 90450.0,  # 0-4
-        72600.0, 69000.0, 66000.0, 63000.0, 61500.0,  # 5-9
-        58500.0, 55500.0, 52500.0, 49500.0, 46500.0,  # 10-14
-        45000.0, 43500.0, 42000.0, 40500.0, 39000.0,  # 15-19
-        37500.0, 36000.0, 34500.0, 33000.0, 31500.0,  # 20-24
-        30000.0, 28500.0, 27000.0, 25500.0, 24000.0,  # 25-29
-        22500.0, 21000.0, 19500.0, 18000.0, 16500.0,  # 30-34
-        16500.0, 16500.0, 16500.0, 15000.0, 15000.0,  # 35-39
-        15000.0, 15000.0, 15000.0, 15000.0, 15000.0,  # 40-44
+        79350.0,
+        109245.0,
+        120000.0,
+        117750.0,
+        90450.0,  # 0-4
+        72600.0,
+        69000.0,
+        66000.0,
+        63000.0,
+        61500.0,  # 5-9
+        58500.0,
+        55500.0,
+        52500.0,
+        49500.0,
+        46500.0,  # 10-14
+        45000.0,
+        43500.0,
+        42000.0,
+        40500.0,
+        39000.0,  # 15-19
+        37500.0,
+        36000.0,
+        34500.0,
+        33000.0,
+        31500.0,  # 20-24
+        30000.0,
+        28500.0,
+        27000.0,
+        25500.0,
+        24000.0,  # 25-29
+        22500.0,
+        21000.0,
+        19500.0,
+        18000.0,
+        16500.0,  # 30-34
+        16500.0,
+        16500.0,
+        16500.0,
+        15000.0,
+        15000.0,  # 35-39
+        15000.0,
+        15000.0,
+        15000.0,
+        15000.0,
+        15000.0,  # 40-44
     ]
 
     def __init__(self, accumulate_count: int = 100, threshold_count: int = 80) -> None:
@@ -142,7 +179,10 @@ class HumanCheckByPeak(HumanCheckBase):
 
         over_threshold = False
         for bin_idx in range(offset, offset + self.BINS_PER_CHANNEL):
-            if bin_idx < len(self.PEAK_THRESHOLD) and energies[bin_idx - offset] > self.PEAK_THRESHOLD[bin_idx]:
+            if (
+                bin_idx < len(self.PEAK_THRESHOLD)
+                and energies[bin_idx - offset] > self.PEAK_THRESHOLD[bin_idx]
+            ):
                 over_threshold = True
                 break
 
@@ -199,12 +239,12 @@ class HumanCheck:
             self.check_by_bigwave.has_human(),
             self.check_by_peak.has_human(),
         ]
-        
+
         if sum(res_list) > 1:
             self._has_human = True
         else:
             self._has_human = False
-            
+
         # Debug printing every 100 calls or so (not ideal here, but good for now)
         # We can't easily count here without self state.
         return self._has_human
@@ -231,13 +271,13 @@ class MMWHumanCheckProcess(multiprocessing.Process):
         self._output_queue = output_queue or multiprocessing.Queue()
         self._channel_num = channel_num
         self._bins_per_channel = bins_per_channel
-        
+
         self._stop_event = multiprocessing.Event()
 
     def run(self) -> None:
         """主循环."""
         print("人体检测进程已启动...")
-        
+
         self._human_checker = HumanCheck()
         self._received_channels = 0
         self._completed_frames = 0
@@ -254,10 +294,12 @@ class MMWHumanCheckProcess(multiprocessing.Process):
                 try:
                     frame_data = self._input_queue.get(timeout=1.0)
                     self._process_single_frame(frame_data)
-                    
+
                     now = time.time()
                     if now - last_fps_time >= 1.0:
-                        fps = (self._completed_frames - last_fps_frame_count) / (now - last_fps_time)
+                        fps = (self._completed_frames - last_fps_frame_count) / (
+                            now - last_fps_time
+                        )
                         print(f"[HumanCheck] FPS: {fps:.1f}")
                         last_fps_frame_count = self._completed_frames
                         last_fps_time = now
@@ -276,47 +318,58 @@ class MMWHumanCheckProcess(multiprocessing.Process):
     def _process_single_frame(self, frame_data: dict[str, Any]) -> None:
         channel_id = frame_data.get("channel_id")
         data = frame_data.get("data")
-        
+
         if channel_id is None or data is None:
             return
-        
+
         self._received_channels += 1
         if not isinstance(data, np.ndarray):
             data = np.array(data, dtype=complex)
-        
+
         if channel_id == 0:
             self._current_offset = frame_data.get("offset", 0)
-            self._current_frame_build = np.zeros((self._channel_num, self._bins_per_channel), dtype=complex)
+            self._current_frame_build = np.zeros(
+                (self._channel_num, self._bins_per_channel), dtype=complex
+            )
             self._current_frame_build[channel_id] = data
         elif self._current_frame_build is not None:
             self._current_frame_build[channel_id] = data
         else:
             return
-        
-        if channel_id == self._channel_num - 1 and self._current_frame_build is not None:
+
+        if (
+            channel_id == self._channel_num - 1
+            and self._current_frame_build is not None
+        ):
             self._completed_frames += 1
-            
+
             energies = np.sum(np.abs(self._current_frame_build), axis=0).tolist()
-            has_human = self._human_checker.do_human_check(energies, self._current_offset)
-            
+            has_human = self._human_checker.do_human_check(
+                energies, self._current_offset
+            )
+
             # Debug log every 200 frames (approx 10s at 20Hz)
             if self._completed_frames % 200 == 0:
-                print(f"[HumanCheck] Status: {'Normal' if has_human else 'Away'} | "
-                      f"S-Wave: {self._human_checker.check_by_smallwave.has_human()} | "
-                      f"B-Wave: {self._human_checker.check_by_bigwave.has_human()} | "
-                      f"Peak: {self._human_checker.check_by_peak.has_human()}")
+                print(
+                    f"[HumanCheck] Status: {'Normal' if has_human else 'Away'} | "
+                    f"S-Wave: {self._human_checker.check_by_smallwave.has_human()} | "
+                    f"B-Wave: {self._human_checker.check_by_bigwave.has_human()} | "
+                    f"Peak: {self._human_checker.check_by_peak.has_human()}"
+                )
 
             self._has_human = has_human
             self._detection_history.append(has_human)
-            
+
             result = {
                 "type": "human_check_data",
-                "has_human": True,
+                "has_human": self._has_human,
                 "frame_count": self._completed_frames,
                 "offset": self._current_offset,
-                "detection_rate": sum(self._detection_history) / len(self._detection_history)
-                if self._detection_history else 0.0,
+                "detection_rate": sum(self._detection_history)
+                / len(self._detection_history)
+                if self._detection_history
+                else 0.0,
             }
-            
+
             if not self._output_queue.full():
                 self._output_queue.put(result)
