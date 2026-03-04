@@ -166,13 +166,25 @@ class SCGGradeProcess(multiprocessing.Process):
     # 心跳周期起点到 AO 主峰的前置时间（秒），保证 MC/IM 可见
     _BEAT_LEAD_TIME = 0.12
 
-    def _make_scg_beat_template(self, t_rel: float) -> float:
-        """在给定的相对时间 t_rel（相对 AO 主峰，单位秒）处计算 SCG 模板值."""
+    def _make_scg_beat_template(
+        self,
+        t_rel: float,
+        amp_mods: np.ndarray | None = None,
+        time_mods: np.ndarray | None = None,
+        overall_scale: float = 1.0,
+    ) -> float:
+        """在给定的相对时间 t_rel（相对 AO 主峰，单位秒）处计算 SCG 模板值.
+        amp_mods  : 各分量幅度比例扩展 (9,), 默认全 1
+        time_mods : 各分量时序伸缩 (9,), 单位秒, 默认全 0
+        overall_scale : 整体幂度比例
+        """
         value = 0.0
-        for offset, amp, sigma in self._SCG_TEMPLATE_COMPONENTS:
-            dt = t_rel - offset
-            value += amp * np.exp(-0.5 * (dt / sigma) ** 2)
-        return value
+        for i, (offset, amp, sigma) in enumerate(self._SCG_TEMPLATE_COMPONENTS):
+            a = amp * (amp_mods[i] if amp_mods is not None else 1.0)
+            t_off = offset + (time_mods[i] if time_mods is not None else 0.0)
+            dt = t_rel - t_off
+            value += a * np.exp(-0.5 * (dt / sigma) ** 2)
+        return value * overall_scale
 
     def run(self) -> None:
         print("SCG评分进程已启动...")
@@ -194,9 +206,15 @@ class SCGGradeProcess(multiprocessing.Process):
         # 下一拍实际 RR（含 HRV 抖动，基于平滑后的 _rr_interval）
         self._rr_next = self._rr_interval
 
-        # 归一化雷达信号缓存（用于 10% 混合）
+        # 归一化雷达信号缓存（保留以备直接多路复用，现已不参与波形混合）
         self._last_radar_value = 0.0
-        self._radar_peak = 1.0  # 运行中的峰值估计，用于自适应归一化
+        self._radar_peak = 1.0
+
+        # 每拍随机扰动参数（首拍为标准模板）
+        n_comp = len(self._SCG_TEMPLATE_COMPONENTS)
+        self._beat_amp_mods = np.ones(n_comp)  # 各分量幅度比例
+        self._beat_time_mods = np.zeros(n_comp)  # 各分量时序偏移（秒）
+        self._beat_overall_scale = 1.0  # 整体幂度
 
         # 预计算模板归一化因子（模板绝对值的最大值，约 1.0）
         t_probe = np.linspace(-0.2, 0.7, 5000)
@@ -412,35 +430,57 @@ class SCGGradeProcess(multiprocessing.Process):
 
         # ------------------------------------------------------------------
         # 每帧对 _rr_interval 做指数平滑（tau ≈ 2.5s = 500 帧）
-        # 心率变化时波形疏密缓慢过渡，不会突然跳变
         # ------------------------------------------------------------------
         RR_SMOOTH_ALPHA = 0.002
         self._rr_interval += (self._rr_target - self._rr_interval) * RR_SMOOTH_ALPHA
 
         # ------------------------------------------------------------------
-        # 模板值：以 beat_clock 相对 AO 计时，归一化至 [-1, 1]
+        # 分数驱动的信号质量指数
+        #   sig_amp  : [0,1] score<30 → 0 (1)， score>85 → 1 (干净波形)
+        #   noise_sig: 高分时微小噪声，低分时大噪声
+        # ------------------------------------------------------------------
+        score = self._current_score
+        sig_amp = float(np.clip((score - 30.0) / 55.0, 0.0, 1.0))
+        # 噪声适度：有波形时 0.02～0.12，无波形时 0.04（平线加微小扑动）
+        noise_sig = 0.02 + 0.10 * (1.0 - sig_amp) if sig_amp > 0 else 0.04
+
+        # ------------------------------------------------------------------
+        # 模板值：以 beat_clock 相对 AO 计时，带每拍扰动参数
         # ------------------------------------------------------------------
         t_rel = self._beat_clock - self._BEAT_LEAD_TIME
-        template_val = self._make_scg_beat_template(t_rel)
+        template_val = self._make_scg_beat_template(
+            t_rel,
+            amp_mods=self._beat_amp_mods,
+            time_mods=self._beat_time_mods,
+            overall_scale=self._beat_overall_scale,
+        )
         template_norm = template_val / self._template_norm_factor
 
         # ------------------------------------------------------------------
-        # 混合：90% 模板 + 10% 归一化雷达原始信号
-        # 两者已各自在 [-1, 1] 内，混合结果天然平滑
+        # 分数驱动输出：波形幅度 + 比例噪声
         # ------------------------------------------------------------------
-        mixed = 0.8 * template_norm + 0.2 * self._last_radar_value
-
-        scg_value = mixed
+        noise = float(np.random.normal(0.0, noise_sig))
+        scg_value = sig_amp * template_norm + noise
 
         # ------------------------------------------------------------------
-        # 推进节拍时钟（含 HRV 抖动，每拍随机 ±1.5%）
+        # 推进节拍时钟（含 HRV 抖动，每拍随机 ±1.5%）;
+        # 拍末时重新随机化本拍扰动参数
         # ------------------------------------------------------------------
         self._beat_clock += self.TIME_STEP
         if self._beat_clock >= self._rr_next:
             self._beat_clock -= self._rr_next
-            hrv = np.random.normal(0.0, 0.015)
-            hrv = float(np.clip(hrv, -0.05, 0.05))
+            # 更新 HRV
+            hrv = float(np.clip(np.random.normal(0.0, 0.015), -0.05, 0.05))
             self._rr_next = float(np.clip(self._rr_interval * (1.0 + hrv), 0.30, 2.0))
+            # 重新生成本拍扰动
+            n_comp = len(self._SCG_TEMPLATE_COMPONENTS)
+            self._beat_amp_mods = np.clip(np.random.normal(1.0, 0.08, n_comp), 0.7, 1.3)
+            # 时序扰动（主心分量AO扰动小，其余分量稍大）
+            self._beat_time_mods = np.random.normal(0.0, 0.004, n_comp)
+            self._beat_time_mods[2] *= 0.5  # AO 主峰时序小扰动
+            self._beat_overall_scale = float(
+                np.clip(np.random.normal(1.0, 0.05), 0.85, 1.15)
+            )
 
         result = {
             "type": "scg_data",
