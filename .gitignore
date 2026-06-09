@@ -209,3 +209,6 @@ marimo/_lsp/
 __marimo__/
 record_raw_data
 module_test
+
+# Local experiment datasets and generated analysis exports.
+data/
